@@ -1,39 +1,55 @@
-# PulseIQ — Workforce Analytics and Data Pipeline
+# PulseIQ ETL Pipeline
 
 ## Project Overview
+PulseIQ is a Python-based ETL pipeline built using pandas. It extracts sample employee, department, salary, attendance, leave, and payroll datasets, standardizes their columns, validates selected data quality rules, and saves clean and rejected records separately.
 
-PulseIQ is a Python-based data project built around the fictional company Zenith Nova Technologies. The project uses employee, department, payroll, attendance, and accounting data to support workforce and financial operations.
+## Technologies Used
+- Python 3.11
+- pandas
+- Pandera
+- pytest
+- Docker and Docker Compose
 
-## Technology Stack
+## Project Structure
+- `src/etl_pipeline/` — ETL extraction, transformation, validation, and loading modules
+- `data/raw/sample/` — sample input CSV files
+- `data/clean/` — cleaned output CSV files
+- `data/rejected/` — rejected records with reasons
+- `tests/` — automated tests
+- `logs/` — pipeline execution logs
+- `docs/metric_dictionary.md` — ETL metric definitions
+- `Dockerfile` and `compose.yaml` — Docker configuration
 
-- Python
-- Pandas
-- OpenPyXL
-- Git and GitHub
-- Docker
+## Setup
+Create and activate a virtual environment, then install dependencies:
 
-## Dataset
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
 
-The source workbook is stored locally at:
+## Run Locally
+```powershell
+python -m src.etl_pipeline.pipeline
+```
 
-`data/raw/01_LedgerForge_Python_Master_Dataset.xlsx`
+## Run Tests
+```powershell
+python -m pytest -v
+```
 
-The dataset contains fictional company data for educational and development purposes.
+## Run with Docker
+```powershell
+docker compose build etl
+docker compose run --rm etl
+```
 
-## Task 1 Progress
+## Data Quality and Outputs
+The pipeline standardizes column names, adds helper columns when applicable, checks selected validation rules, and saves clean and rejected records separately. It reports input rows, clean rows, rejected rows, rejection rate, and clean rate. Execution details are recorded in `logs/etl.log`.
 
-- Created the project structure.
-- Inspected the source workbook and its sheets.
-- Exported the first 10 employee records to `employees_sample.csv`.
-- Exported department records to `departments_sample.csv`.
-- Verified that both sample CSV files were created successfully.
+## Current Sample Run
+The eight sample datasets contain 81 input rows in total. In the latest successful run, all 81 rows were accepted and no rows were rejected. Additional invalid records should be tested when expanding the validation rules.
 
-## Run the Sample Export
-
-Activate the virtual environment and run:
-
-`python scripts/create_sample_data.py`
-
-## Data and Privacy
-
-The source workbook and generated datasets are local development files. They should not be committed to the Git repository unless explicitly required and approved.
+## Limitations
+This version uses small sample CSV files and selected validation rules. It is a foundation for extending validation coverage and processing the full master workbook.

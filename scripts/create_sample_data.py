@@ -1,8 +1,6 @@
 from pathlib import Path
 import pandas as pd
 
-from openpyxl import load_workbook
-
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 
@@ -14,41 +12,45 @@ WORKBOOK_PATH = (
 )
 
 OUTPUT_DIR = BASE_DIR / "data" / "raw" / "sample"
-
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-workbook = load_workbook(
-    WORKBOOK_PATH,
-    read_only=True,
-    data_only=True,
-)
+
+# Keep the existing employee and department samples.
+sample_sheets = {
+    "employees": 10,
+    "departments": None,
+    "salary_revisions": 10,
+    "salary_structures": 10,
+    "attendance": 10,
+    "leave_requests": 10,
+    "payroll_runs": 10,
+    "payroll_items": 10,
+}
 
 try:
-    employees = pd.read_excel(
-        WORKBOOK_PATH,
-        sheet_name="employees",
-        nrows=10,
-    )
+    for sheet_name, row_limit in sample_sheets.items():
+        if row_limit is None:
+            df = pd.read_excel(
+                WORKBOOK_PATH,
+                sheet_name=sheet_name,
+            )
+        else:
+            df = pd.read_excel(
+                WORKBOOK_PATH,
+                sheet_name=sheet_name,
+                nrows=row_limit,
+            )
 
-    departments = pd.read_excel(
-        WORKBOOK_PATH,
-        sheet_name="departments",
-    )
+        output_file = OUTPUT_DIR / f"{sheet_name}_sample.csv"
 
-    employees.to_csv(
-        OUTPUT_DIR / "employees_sample.csv",
-        index=False,
-    )
+        df.to_csv(output_file, index=False)
 
-    departments.to_csv(
-        OUTPUT_DIR / "departments_sample.csv",
-        index=False,
-    )
+        print(f"{sheet_name}: {len(df)} rows saved")
 
-    print("Sample files created successfully!")
-    print("Employee sample rows:", len(employees))
-    print("Department rows:", len(departments))
+
+    print("\nSample files created successfully!")
     print("Output folder:", OUTPUT_DIR)
 
-finally:
-    workbook.close()
+except Exception as error:
+    print("Error creating sample files:", error)
+    raise
