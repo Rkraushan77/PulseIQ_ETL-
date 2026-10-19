@@ -94,14 +94,4 @@ def test_exact_duplicate_rows_are_rejected():
     assert len(rejected) == 1
     assert "Exact duplicate row" in rejected.iloc[0]["rejection_reason"]
 
-    def test_exact_duplicate_rows_are_rejected():
-       df = pd.DataFrame({
-        "employee_id": ["EMP001", "EMP001", "EMP002"],
-        "name": ["Amit", "Amit", "Neha"]
-    })
-
-    clean, rejected = validate_exact_duplicates(df)
-
-    assert len(clean) == 2
-    assert len(rejected) == 1
-    assert "Exact duplicate row" in rejected.iloc[0]["rejection_reason"]
+    

@@ -1,0 +1,138 @@
+
+{
+  "dataset": "LedgerForge Master Dataset",
+  "version": "1.0",
+  "as_of_date": "2026-09-30",
+  "sheets": {
+    "employees": {
+      "required_columns": [
+        "employee_id",
+        "hire_date",
+        "employment_status"
+      ],
+      "unique_key": "employee_id",
+      "date_columns": [
+        "date_of_birth",
+        "hire_date",
+        "exit_date",
+        "resignation_date",
+        "created_at"
+      ],
+      "rules": [
+        "employee_id must not be missing or blank",
+        "hire_date must be a valid date",
+        "exit_date must not be earlier than hire_date"
+      ]
+    },
+    "salary_structures": {
+      "required_columns": [
+        "structure_id",
+        "employee_id",
+        "monthly_amount",
+        "effective_from"
+      ],
+      "unique_key": "structure_id",
+      "date_columns": [
+        "effective_from",
+        "effective_to"
+      ],
+      "non_negative_columns": [
+        "monthly_amount"
+      ]
+    },
+    "attendance": {
+      "required_columns": [
+        "attendance_id",
+        "employee_id",
+        "attendance_date",
+        "status"
+      ],
+      "unique_key": "attendance_id",
+      "date_columns": [
+        "attendance_date"
+      ],
+      "non_negative_columns": [
+  "overtime_hours"
+],
+"nullable_non_negative_columns": [
+  "hours_worked"
+]
+    },
+    "leave_requests": {
+      "required_columns": [
+        "leave_request_id",
+        "employee_id",
+        "start_date",
+        "end_date",
+        "status"
+      ],
+      "unique_key": "leave_request_id",
+      "date_columns": [
+        "start_date",
+        "end_date",
+        "applied_on",
+        "decided_on"
+      ],
+      "non_negative_columns": [
+        "days"
+      ],
+      "rules": [
+        "end_date must not be earlier than start_date"
+      ]
+    },
+    "payroll_runs": {
+      "required_columns": [
+        "run_id",
+        "period_start",
+        "period_end",
+        "status"
+      ],
+      "unique_key": "run_id",
+      "date_columns": [
+        "period_start",
+        "period_end",
+        "pay_date",
+        "created_at",
+        "approved_at"
+      ],
+      "non_negative_columns": [
+        "total_gross",
+        "total_deductions",
+        "total_net",
+        "total_employer_contributions",
+        "total_employer_cost"
+      ],
+      "rules": [
+        "period_end must not be earlier than period_start"
+      ]
+    },
+    "payroll_items": {
+      "required_columns": [
+        "payroll_item_id",
+        "run_id",
+        "employee_id",
+        "period_start",
+        "period_end",
+        "gross_pay",
+        "total_deductions",
+        "net_pay"
+      ],
+      "unique_key": "payroll_item_id",
+      "date_columns": [
+        "period_start",
+        "period_end"
+      ],
+      "non_negative_columns": [
+        "monthly_fixed_gross",
+        "earned_fixed_pay",
+        "gross_pay",
+        "total_deductions",
+        "net_pay",
+        "employer_cost"
+      ],
+      "rules": [
+        "period_end must not be earlier than period_start"
+      ]
+    }
+  }
+}

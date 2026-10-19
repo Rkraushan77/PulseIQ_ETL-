@@ -1,19 +1,20 @@
+
 from pathlib import Path
 import logging
+import pandas as pd
 
-from src.etl_pipeline.extract import extract_all
+from src.etl_pipeline.extract import extract_excel_sheets
 from src.etl_pipeline.transform import clean_data
-from src.etl_pipeline.validate import (
-    validate_employee,
-    validate_non_negative_amounts,
-    validate_exact_duplicates,
+from src.etl_pipeline.contract import (
+    load_contract,
+    split_contract_rows,
 )
 from src.etl_pipeline.load import save_data
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 
-RAW_DIR = BASE_DIR / "data" / "raw"
+WORKBOOK = BASE_DIR / "data" / "raw" / "01_LedgerForge_Python_Master_Dataset.xlsx"
 CLEAN_DIR = BASE_DIR / "data" / "clean"
 REJECTED_DIR = BASE_DIR / "data" / "rejected"
 LOG_DIR = BASE_DIR / "logs"
@@ -28,99 +29,49 @@ logging.basicConfig(
 
 
 def run_pipeline():
-    files = {
-        "employee": "sample/employees_sample.csv",
-        "department": "sample/departments_sample.csv",
-        "salary_revision": "sample/salary_revisions_sample.csv",
-        "salary_structure": "sample/salary_structures_sample.csv",
-        "attendance": "sample/attendance_sample.csv",
-        "leave_request": "sample/leave_requests_sample.csv",
-        "payroll_run": "sample/payroll_runs_sample.csv",
-        "payroll_item": "sample/payroll_items_sample.csv",
-    }
-
     logging.info("Pipeline started")
-    print("Starting ETL pipeline...")
+    print("Starting PulseIQ ETL pipeline...")
 
     try:
-        data = extract_all(RAW_DIR, files)
+        contract = load_contract()
+
+        data = extract_excel_sheets(
+            WORKBOOK,
+            contract["sheets"].keys(),
+        )
+
+        total_input = 0
+        total_clean = 0
+        total_rejected = 0
 
         for name, df in data.items():
-            # Count original records before cleaning
             input_rows = len(df)
+            total_input += input_rows
 
-            # Standardize column names and add helper columns
+            # Standardize column names and helper columns.
             transformed = clean_data(df)
 
-            # Reject exact duplicate rows before dataset validation
-            unique_rows, duplicate_rejected = (
-                validate_exact_duplicates(transformed)
-            )
-
-            # Dataset-specific validation
-            if name == "employee":
-                clean, rejected = validate_employee(unique_rows)
-
-            elif name == "salary_structure":
-                clean, rejected = validate_non_negative_amounts(
-                    unique_rows,
-                    ["monthly_amount"],
-                )
-
-            elif name == "payroll_item":
-                payroll_amount_columns = [
-                    "monthly_fixed_gross",
-                    "earned_fixed_pay",
-                    "gross_pay",
-                    "total_deductions",
-                    "net_pay",
-                    "employer_cost",
-                ]
-
-                clean, rejected = validate_non_negative_amounts(
-                    unique_rows,
-                    payroll_amount_columns,
-                )
-
-            else:
-                # Dataset-specific validation will be added later.
-                clean = unique_rows.copy()
-                rejected = unique_rows.iloc[0:0].copy()
-                rejected["rejection_reason"] = ""
-
-            # Combine duplicate rejections with other rejections.
-            # Align columns so each rejected row retains its reason.
-            rejected_frames = []
-
-            if not duplicate_rejected.empty:
-                rejected_frames.append(duplicate_rejected)
-
-            if not rejected.empty:
-                rejected_frames.append(rejected)
-
-            if rejected_frames:
-                all_rejected = __import__("pandas").concat(
-                    rejected_frames,
-                    ignore_index=True,
-                    sort=False,
-                )
-            else:
-                all_rejected = unique_rows.iloc[0:0].copy()
-                all_rejected["rejection_reason"] = ""
+            # Contract validation fails clearly if the dataset
+            # violates a configured rule.
+            clean, rejected = split_contract_rows(
+    name,
+    transformed,
+    contract
+)
 
             clean_rows = len(clean)
-            rejected_rows = len(all_rejected)
+            rejected_rows = len(rejected)
+
+            total_clean += clean_rows
+            total_rejected += rejected_rows
 
             rejection_rate = (
                 round(rejected_rows / input_rows * 100, 2)
-                if input_rows > 0
-                else 0.0
+                if input_rows else 0.0
             )
-
             clean_rate = (
                 round(clean_rows / input_rows * 100, 2)
-                if input_rows > 0
-                else 0.0
+                if input_rows else 0.0
             )
 
             metrics = {
@@ -132,25 +83,25 @@ def run_pipeline():
                 "clean_rate": clean_rate,
             }
 
-            # Save clean and rejected records
-            save_data(
-                clean,
-                CLEAN_DIR,
-                f"{name}_clean.csv",
-            )
-
-            save_data(
-                all_rejected,
-                REJECTED_DIR,
-                f"{name}_rejected.csv",
-            )
+            save_data(clean, CLEAN_DIR, f"{name}_clean.csv")
+            save_data(rejected, REJECTED_DIR, f"{name}_rejected.csv")
 
             logging.info("Dataset metrics: %s", metrics)
+            print(f"\n{name} metrics:")
+            for key, value in metrics.items():
+                if key != "dataset":
+                    print(f"{key}: {value}")
 
-            print(f"\n{name.replace('_', ' ').title()} metrics:")
-            for metric_name, value in metrics.items():
-                if metric_name != "dataset":
-                    print(f"{metric_name}: {value}")
+        summary = {
+            "input_rows": total_input,
+            "clean_rows": total_clean,
+            "rejected_rows": total_rejected,
+        }
+
+        logging.info("Pipeline totals: %s", summary)
+        print("\nPipeline totals:")
+        for key, value in summary.items():
+            print(f"{key}: {value}")
 
         logging.info("Pipeline completed successfully")
         print("\nPipeline completed successfully")
