@@ -37,36 +37,25 @@ The workbook is expected at `data/raw/01_LedgerForge_Python_Master_Dataset.xlsx`
 
 ## Project Structure
 
-```text
 PulseIQ_ETL/
-├── contracts/
-│   └── data_contract.json
-├── data/
-│   ├── raw/
-│   │   ├── 01_LedgerForge_Python_Master_Dataset.xlsx
-│   │   └── sample/
-│   ├── clean/
-│   └── rejected/
-├── docs/
-│   └── metric_dictionary.md
-├── logs/
-├── scripts/
-│   └── check_contract.py
-├── src/
-│   └── etl_pipeline/
-│       ├── extract.py
-│       ├── transform.py
-│       ├── validate.py
-│       ├── contract.py
-│       ├── load.py
-│       └── pipeline.py
-├── tests/
-├── requirements.txt
-├── Dockerfile
-├── compose.yaml
-└── README.md
-```
-
+|-- contracts/
+|   `-- data_contract.json
+|-- data/
+|   |-- raw/
+|   |   |-- master workbook
+|   |   `-- sample/
+|   |-- clean/
+|   `-- rejected/
+|-- docs/
+|-- logs/
+|-- scripts/
+|-- src/
+|   `-- etl_pipeline/
+|-- tests/
+|-- requirements.txt
+|-- Dockerfile
+|-- compose.yaml
+`-- README.md
 ## Setup
 
 Create and activate a virtual environment in PowerShell:
