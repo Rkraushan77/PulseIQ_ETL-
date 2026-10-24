@@ -2,3 +2,4 @@ pandas
 pandera[pandas]
 pytest
 openpyxl
+duckdb

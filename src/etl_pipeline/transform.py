@@ -1,5 +1,8 @@
+﻿import logging
 import pandas as pd
-from src.etl_pipeline.validate import validate_exact_duplicates
+
+logger = logging.getLogger(__name__)
+
 
 def clean_columns(df):
     df = df.copy()
@@ -15,18 +18,13 @@ def clean_columns(df):
 
 
 def remove_duplicates(df):
-    """
-    Kept for compatibility with existing code.
-    Duplicate removal is handled by the validation pipeline
-    so duplicate records can be counted and tracked.
-    """
+    """Keep duplicate handling in the validation pipeline."""
     return df.copy()
 
 
 def add_helper_columns(df):
     df = df.copy()
 
-    # Add tenure fields only when hire_date is available.
     if "hire_date" in df.columns:
         df["hire_date"] = pd.to_datetime(
             df["hire_date"], errors="coerce"
@@ -48,20 +46,35 @@ def add_helper_columns(df):
     return df
 
 
+def warn_unexpected_columns(df, sheet_name, contract):
+    """Log unexpected columns without deleting them."""
+    sheet_rules = contract.get("sheets", {}).get(sheet_name)
+
+    if sheet_rules is None:
+        logger.warning(
+            "No contract found for dataset '%s'.", sheet_name
+        )
+        return
+
+    expected_columns = (
+        set(sheet_rules.get("column_types", {}).keys())
+        | set(sheet_rules.get("required_columns", []))
+    )
+
+    actual_columns = set(df.columns)
+    unexpected_columns = sorted(actual_columns - expected_columns)
+
+    if unexpected_columns:
+        logger.warning(
+            "Unexpected columns in '%s': %s",
+            sheet_name,
+            ", ".join(unexpected_columns),
+        )
+
+
 def clean_data(df):
     df = clean_columns(df)
     df = remove_duplicates(df)
     df = add_helper_columns(df)
 
     return df
-def test_exact_duplicate_rows_are_rejected():
-    df = pd.DataFrame({
-        "employee_id": ["EMP001", "EMP001", "EMP002"],
-        "name": ["Amit", "Amit", "Neha"]
-    })
-
-    clean, rejected = validate_exact_duplicates(df)
-
-    assert len(clean) == 2
-    assert len(rejected) == 1
-    assert "Exact duplicate row" in rejected.iloc[0]["rejection_reason"]

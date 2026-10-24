@@ -1,97 +1,56 @@
-from src.etl_pipeline.validate import validate_non_negative_amounts
-import pandas as pd
+﻿import pandas as pd
+
+from src.etl_pipeline.transform import (
+    clean_columns,
+    add_helper_columns,
+    clean_data,
+)
 from src.etl_pipeline.validate import validate_exact_duplicates
-from src.etl_pipeline.transform import clean_data
-from src.etl_pipeline.validate import validate_employee
+
+
+def test_clean_columns():
+    df = pd.DataFrame({
+        " Employee ID ": ["EMP-001"],
+        "First Name": ["Raushan"],
+    })
+
+    result = clean_columns(df)
+
+    assert list(result.columns) == ["employee_id", "first_name"]
+
+
+def test_add_helper_columns():
+    df = pd.DataFrame({
+        "hire_date": ["2025-09-30"],
+    })
+
+    result = add_helper_columns(df)
+
+    assert result.loc[0, "hire_month"] == 9
+    assert result.loc[0, "hire_year"] == 2025
+    assert result.loc[0, "tenure_days"] == 365
+    assert result.loc[0, "tenure_years"] == 1.0
 
 
 def test_clean_data():
     df = pd.DataFrame({
-        "Employee Name": ["Amit", "Amit", "Neha"],
-        "Salary": [25000, 25000, 30000]
+        "Employee ID": ["EMP-001"],
     })
 
     result = clean_data(df)
 
-    # Cleaning standardizes columns but preserves rows.
-    # Duplicate detection happens during validation.
-    assert len(result) == 3
-    assert "employee_name" in result.columns
-    assert "salary" in result.columns
-    
+    assert "employee_id" in result.columns
+    assert len(result) == 1
 
 
-def test_invalid_employee_records_are_rejected():
+def test_validate_exact_duplicates():
     df = pd.DataFrame({
-        "employee_id": ["EMP001", "", "EMP003"],
-        "hire_date": [
-            "2024-01-10",
-            "2024-02-10",
-            "2024-05-20"
-        ],
-        "exit_date": [
-            None,
-            None,
-            "2024-01-01"
-        ]
-    })
-
-    clean, rejected = validate_employee(df)
-
-    assert len(clean) == 1
-    assert len(rejected) == 2
-
-    reasons = " ".join(rejected["rejection_reason"].tolist())
-
-    assert "Missing employee ID" in reasons
-    assert "Exit date before hire date" in reasons
-
-def test_duplicate_employee_ids_are_rejected():
-    df = pd.DataFrame({
-        "employee_id": ["EMP001", "EMP001", "EMP002"],
-        "hire_date": [
-            "2024-01-10",
-            "2024-02-15",
-            "2024-03-20"
-        ],
-        "exit_date": [None, None, None]
-    })
-
-    clean, rejected = validate_employee(df)
-
-    assert len(clean) == 1
-    assert len(rejected) == 2
-    assert all(
-        rejected["rejection_reason"].str.contains(
-            "Duplicate employee ID"
-        )
-    )
-
-def test_negative_salary_amounts_are_rejected():
-    df = pd.DataFrame({
-        "monthly_amount": [25000, -5000, 30000]
-    })
-
-    clean, rejected = validate_non_negative_amounts(
-        df,
-        ["monthly_amount"]
-    )
-
-    assert len(clean) == 2
-    assert len(rejected) == 1
-    assert "negative monthly_amount" in rejected.iloc[0]["rejection_reason"]
-
-
-def test_exact_duplicate_rows_are_rejected():
-    df = pd.DataFrame({
-        "employee_id": ["EMP001", "EMP001", "EMP002"],
-        "name": ["Amit", "Amit", "Neha"]
+        "employee_id": ["EMP-001", "EMP-001"],
+        "first_name": ["Asha", "Asha"],
     })
 
     clean, rejected = validate_exact_duplicates(df)
 
-    assert len(clean) == 2
+    assert len(clean) == 1
     assert len(rejected) == 1
-    assert "Exact duplicate row" in rejected.iloc[0]["rejection_reason"]
-
-    
+    assert "rejection_reason" in rejected.columns

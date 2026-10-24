@@ -129,3 +129,63 @@ def validate_non_negative_amounts(df, amount_columns):
     ).copy()
 
     return clean, rejected
+
+def validate_allowed_values(df, allowed_values):
+    """
+    Reject rows that contain values not allowed by the contract.
+    """
+    df = df.copy()
+    df["rejection_reason"] = ""
+
+    for column, allowed in allowed_values.items():
+        if column not in df.columns:
+            raise ValueError(
+                f"Required column missing: {column}"
+            )
+
+        invalid = (
+            df[column].notna()
+            & ~df[column].astype(str).isin(allowed)
+        )
+
+        df.loc[invalid, "rejection_reason"] += (
+            f"Invalid value in {column}; "
+        )
+
+    rejected = df[df["rejection_reason"] != ""].copy()
+
+    clean = df[df["rejection_reason"] == ""].drop(
+        columns=["rejection_reason"]
+    ).copy()
+
+    return clean, rejected
+
+def validate_allowed_values(df, allowed_values):
+    """
+    Reject rows that contain values not allowed by the contract.
+    """
+    df = df.copy()
+    df["rejection_reason"] = ""
+
+    for column, allowed in allowed_values.items():
+        if column not in df.columns:
+            raise ValueError(
+                f"Required column missing: {column}"
+            )
+
+        invalid = (
+            df[column].notna()
+            & ~df[column].astype(str).isin(allowed)
+        )
+
+        df.loc[invalid, "rejection_reason"] += (
+            f"Invalid value in {column}; "
+        )
+
+    rejected = df[df["rejection_reason"] != ""].copy()
+
+    clean = df[df["rejection_reason"] == ""].drop(
+        columns=["rejection_reason"]
+    ).copy()
+
+    return clean, rejected

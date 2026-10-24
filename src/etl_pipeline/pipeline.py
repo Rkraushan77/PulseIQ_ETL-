@@ -4,12 +4,12 @@ import logging
 import pandas as pd
 
 from src.etl_pipeline.extract import extract_excel_sheets
-from src.etl_pipeline.transform import clean_data
+from src.etl_pipeline.transform import clean_data, warn_unexpected_columns
 from src.etl_pipeline.contract import (
     load_contract,
     split_contract_rows,
 )
-from src.etl_pipeline.load import save_data
+from src.etl_pipeline.load import save_data, load_to_duckdb
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -33,6 +33,16 @@ def run_pipeline():
     print("Starting PulseIQ ETL pipeline...")
 
     try:
+        # Load every workbook sheet into DuckDB raw tables.
+        workbook_data = extract_excel_sheets(
+            WORKBOOK,
+            pd.ExcelFile(WORKBOOK).sheet_names,
+        )
+
+        load_to_duckdb(
+            workbook_data,
+            BASE_DIR / "data" / "pulseiq.duckdb",
+        )
         contract = load_contract()
 
         data = extract_excel_sheets(
@@ -48,7 +58,8 @@ def run_pipeline():
             input_rows = len(df)
             total_input += input_rows
 
-            # Standardize column names and helper columns.
+            warn_unexpected_columns(df, name, contract)
+
             transformed = clean_data(df)
 
             # Contract validation fails clearly if the dataset
