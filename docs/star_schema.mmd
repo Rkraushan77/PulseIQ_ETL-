@@ -1,0 +1,106 @@
+﻿erDiagram
+    DIM_DATE ||--o{ FACT_ATTENDANCE : attendance_date
+    DIM_DATE ||--o{ FACT_LEAVE : start_date
+    DIM_DATE ||--o{ FACT_LEAVE : end_date
+    DIM_DATE ||--o{ FACT_PAYROLL : period_start
+    DIM_DATE ||--o{ FACT_PAYROLL : period_end
+
+    DIM_EMPLOYEE ||--o{ FACT_ATTENDANCE : records
+    DIM_EMPLOYEE ||--o{ FACT_LEAVE : requests
+    DIM_EMPLOYEE ||--o{ FACT_SALARY_STRUCTURE : receives
+    DIM_EMPLOYEE ||--o{ FACT_PAYROLL : earns
+
+    DIM_DEPARTMENT ||--o{ DIM_EMPLOYEE : assignment_history
+    DIM_ROLE ||--o{ DIM_EMPLOYEE : assignment_history
+    DIM_LEAVE_TYPE ||--o{ FACT_LEAVE : classifies
+    FACT_PAYROLL_RUN ||--o{ FACT_PAYROLL : contains
+
+    DIM_EMPLOYEE {
+        BIGINT employee_key PK
+        VARCHAR employee_id
+        VARCHAR assignment_id
+        DATE effective_from
+        DATE effective_to
+        BOOLEAN is_current
+        VARCHAR department_id
+        VARCHAR role_id
+    }
+
+    DIM_DEPARTMENT {
+        VARCHAR department_id PK
+        VARCHAR department_name
+        VARCHAR cost_center
+    }
+
+    DIM_ROLE {
+        VARCHAR role_id PK
+        VARCHAR department_id
+        VARCHAR role_title
+        BIGINT level
+        VARCHAR grade
+    }
+
+    DIM_LEAVE_TYPE {
+        VARCHAR leave_type_code PK
+        VARCHAR leave_type_name
+    }
+
+    DIM_DATE {
+        DATE date_key PK
+        INTEGER year
+        INTEGER month
+        INTEGER quarter
+    }
+
+    FACT_ATTENDANCE {
+        VARCHAR attendance_id PK
+        BIGINT employee_key FK
+        DATE attendance_date
+        DATE attendance_date_key FK
+        VARCHAR department_id
+        DOUBLE hours_worked
+    }
+
+    FACT_LEAVE {
+        VARCHAR leave_request_id PK
+        BIGINT employee_key FK
+        VARCHAR leave_type_code FK
+        DATE start_date
+        DATE start_date_key FK
+        DATE end_date
+        DATE end_date_key FK
+        BIGINT days
+    }
+
+    FACT_SALARY_STRUCTURE {
+        VARCHAR structure_id PK
+        BIGINT employee_key FK
+        DATE effective_from
+        DATE effective_to
+        DOUBLE monthly_amount
+    }
+
+    FACT_PAYROLL {
+        VARCHAR payroll_item_id PK
+        BIGINT employee_key FK
+        VARCHAR run_id FK
+        DATE period_start
+        DATE period_start_key FK
+        DATE period_end
+        DATE period_end_key FK
+        VARCHAR department_id
+        VARCHAR role_id
+        DOUBLE gross_pay
+        DOUBLE net_pay
+    }
+
+    FACT_PAYROLL_RUN {
+        VARCHAR run_id PK
+        DATE period_start
+        DATE period_end
+        DATE pay_date
+        BIGINT employees_paid
+        DOUBLE total_gross
+        DOUBLE total_net
+        VARCHAR status
+    }
