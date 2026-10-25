@@ -592,3 +592,13 @@ def build_warehouse():
 
 if __name__ == "__main__":
     build_warehouse()
+
+    # Run Task 3 checks after the warehouse build succeeds.
+    import sys
+    SCRIPTS_DIR = str(Path(__file__).resolve().parent)
+
+    if SCRIPTS_DIR not in sys.path:
+        sys.path.insert(0, SCRIPTS_DIR)
+
+    from run_data_quality import run_checks
+    run_checks()

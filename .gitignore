@@ -23,3 +23,5 @@ logs/
 # Test and development cache
 .pytest_cache/
 .coverage
+
+scripts/build_warehouse_backup.py

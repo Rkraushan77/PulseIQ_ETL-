@@ -1,0 +1,106 @@
+
+{
+  "catalog_name": "PulseIQ Proposed Data Quality Checks",
+  "version": "1.0",
+  "note": "Proposed checks based on the available warehouse schema. Verify against the assignment's original dq_checks_catalog when available.",
+  "checks": [
+    {
+      "check_id": "DQ01",
+      "name": "Employee ID is missing",
+      "table": "source_employees",
+      "severity": "CRITICAL",
+      "description": "An employee record has no employee ID, so it cannot be reliably identified."
+    },
+    {
+      "check_id": "DQ02",
+      "name": "Employee ID is duplicated",
+      "table": "source_employees",
+      "severity": "CRITICAL",
+      "description": "Two employee records share the same employee ID, which can cause incorrect employee counts or joins."
+    },
+    {
+      "check_id": "DQ03",
+      "name": "Employee exit date precedes hire date",
+      "table": "source_employees",
+      "severity": "CRITICAL",
+      "description": "An employee appears to have left before joining the company."
+    },
+    {
+      "check_id": "DQ04",
+      "name": "Employment status is invalid",
+      "table": "source_employees",
+      "severity": "WARNING",
+      "description": "An employee has an employment status outside the approved values."
+    },
+    {
+      "check_id": "DQ05",
+      "name": "Salary structure ID is duplicated",
+      "table": "fact_salary_structure",
+      "severity": "CRITICAL",
+      "description": "Multiple salary structure rows share an ID that should uniquely identify a record."
+    },
+    {
+      "check_id": "DQ06",
+      "name": "Salary amount is negative",
+      "table": "fact_salary_structure",
+      "severity": "CRITICAL",
+      "description": "A salary component has a negative monthly amount."
+    },
+    {
+      "check_id": "DQ07",
+      "name": "Attendance ID is duplicated",
+      "table": "fact_attendance",
+      "severity": "CRITICAL",
+      "description": "Multiple attendance records share the same attendance ID."
+    },
+    {
+      "check_id": "DQ08",
+      "name": "Attendance status is invalid",
+      "table": "fact_attendance",
+      "severity": "WARNING",
+      "description": "An attendance record uses a status outside the observed approved status list."
+    },
+    {
+      "check_id": "DQ09",
+      "name": "Overtime hours are negative",
+      "table": "fact_attendance",
+      "severity": "WARNING",
+      "description": "An attendance record reports fewer than zero overtime hours."
+    },
+    {
+      "check_id": "DQ10",
+      "name": "Leave end date precedes start date",
+      "table": "fact_leave",
+      "severity": "CRITICAL",
+      "description": "A leave request ends before it begins."
+    },
+    {
+      "check_id": "DQ11",
+      "name": "Leave request ID is duplicated",
+      "table": "fact_leave",
+      "severity": "CRITICAL",
+      "description": "Multiple leave requests share the same request ID."
+    },
+    {
+      "check_id": "DQ12",
+      "name": "Payroll period dates are invalid",
+      "table": "fact_payroll_run",
+      "severity": "CRITICAL",
+      "description": "A payroll run ends before its start date."
+    },
+    {
+      "check_id": "DQ13",
+      "name": "Payroll item ID is duplicated",
+      "table": "fact_payroll",
+      "severity": "CRITICAL",
+      "description": "Multiple payroll item records share the same payroll item ID."
+    },
+    {
+      "check_id": "DQ14",
+      "name": "Payroll net pay does not reconcile",
+      "table": "fact_payroll",
+      "severity": "CRITICAL",
+      "description": "Net pay differs from gross pay minus total deductions by more than 0.01."
+    }
+  ]
+}
