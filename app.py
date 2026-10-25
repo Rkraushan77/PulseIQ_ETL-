@@ -1,6 +1,8 @@
+
 import duckdb
 import streamlit as st
 import plotly.express as px
+from datetime import date
 
 st.set_page_config(
     page_title="PulseIQ | Workforce Dashboard",
@@ -25,14 +27,26 @@ def load_data():
     """).df()
 
     departments = con.execute("""
-        SELECT department_id, department_name, headcount
-        FROM metric_dashboard_department
-        ORDER BY headcount DESC
+        SELECT department_id, department_name
+        FROM dim_department
+        ORDER BY department_name
     """).df()
 
-    locations = con.execute("""
-        SELECT work_location, employees
-        FROM metric_dashboard_location
+    department_monthly = con.execute("""
+        SELECT
+            h.month_end,
+            h.department_id,
+            d.department_name,
+            h.headcount
+        FROM metric_dashboard_headcount h
+        JOIN dim_department d
+            ON h.department_id = d.department_id
+        ORDER BY h.month_end, d.department_name
+    """).df()
+
+    location_tiers = con.execute("""
+        SELECT location_tier, employees
+        FROM metric_dashboard_location_tier
         ORDER BY employees DESC
     """).df()
 
@@ -43,16 +57,43 @@ def load_data():
     """).df()
 
     con.close()
-    headcount["month_end"] = headcount["month_end"].astype("datetime64[ns]")
-    return headcount, departments, locations, work_modes
+
+    headcount["month_end"] = headcount["month_end"].astype(
+        "datetime64[ns]"
+    )
+    department_monthly["month_end"] = department_monthly[
+        "month_end"
+    ].astype("datetime64[ns]")
+
+    return (
+        headcount,
+        departments,
+        department_monthly,
+        location_tiers,
+        work_modes
+    )
 
 
 try:
-    headcount, departments, locations, work_modes = load_data()
+    (
+        headcount,
+        departments,
+        department_monthly,
+        location_tiers,
+        work_modes
+    ) = load_data()
 
+    if headcount.empty:
+        st.warning("No headcount data is available.")
+        st.stop()
+
+    # Dashboard filters
     st.sidebar.header("Dashboard Filters")
 
-    all_departments = sorted(departments["department_name"].tolist())
+    all_departments = sorted(
+        departments["department_name"].tolist()
+    )
+
     selected_departments = st.sidebar.multiselect(
         "Department",
         all_departments,
@@ -60,7 +101,10 @@ try:
         placeholder="Select departments"
     )
 
-    min_date = max(headcount["month_end"].min().date(), __import__("datetime").date(2025, 4, 1))
+    min_date = max(
+        headcount["month_end"].min().date(),
+        date(2025, 4, 1)
+    )
     max_date = headcount["month_end"].max().date()
 
     date_range = st.sidebar.date_input(
@@ -75,54 +119,80 @@ try:
     else:
         start_date, end_date = min_date, max_date
 
+    if start_date > end_date:
+        st.warning("The start date must be before the end date.")
+        st.stop()
+
+    selected_department_ids = departments.loc[
+        departments["department_name"].isin(selected_departments),
+        "department_id"
+    ].tolist()
+
+    # Filter headcount by department and reporting period
     filtered_headcount = headcount[
-        (headcount["department_id"].isin(
-            departments.loc[
-                departments["department_name"].isin(selected_departments),
-                "department_id"
-            ]
-        ))
+        headcount["department_id"].isin(selected_department_ids)
         & (headcount["month_end"].dt.date >= start_date)
         & (headcount["month_end"].dt.date <= end_date)
     ]
 
-    latest_month = filtered_headcount["month_end"].max()
     if filtered_headcount.empty:
         st.warning("No headcount data matches these filters.")
         st.stop()
 
+    latest_month = filtered_headcount["month_end"].max()
+
     latest_data = filtered_headcount[
         filtered_headcount["month_end"] == latest_month
     ]
+
     current_headcount = int(latest_data["headcount"].sum())
 
-    previous_months = sorted(
+    # Compare the latest selected month with the previous available month
+    available_months = sorted(
         filtered_headcount["month_end"].dropna().unique()
     )
+
     previous_headcount = None
 
-    if len(previous_months) >= 2:
+    if len(available_months) >= 2:
+        previous_month = available_months[-2]
+
         previous_data = filtered_headcount[
-            filtered_headcount["month_end"] == previous_months[-2]
+            filtered_headcount["month_end"] == previous_month
         ]
+
         previous_headcount = int(previous_data["headcount"].sum())
 
     change = (
         current_headcount - previous_headcount
-        if previous_headcount is not None else None
+        if previous_headcount is not None
+        else None
     )
 
+    # KPI cards
     col1, col2, col3 = st.columns(3)
-    col1.metric("Headcount", current_headcount)
+
+    col1.metric(
+        "Headcount (selected departments)",
+        current_headcount
+    )
+
     col2.metric(
-        "Change vs previous month",
+        "Change vs previous available month",
         change if change is not None else "N/A"
     )
-    col3.metric("Departments selected", len(selected_departments))
 
+    col3.metric(
+        "Departments selected",
+        len(selected_departments)
+    )
+
+    # 1. Headcount trend
     st.subheader("Headcount trend")
+
     trend = (
-        filtered_headcount.groupby("month_end", as_index=False)["headcount"]
+        filtered_headcount
+        .groupby("month_end", as_index=False)["headcount"]
         .sum()
         .sort_values("month_end")
     )
@@ -132,28 +202,43 @@ try:
         x="month_end",
         y="headcount",
         markers=True,
-        labels={"month_end": "Month", "headcount": "Employees"},
+        labels={
+            "month_end": "Month",
+            "headcount": "Employees"
+        },
         title="How headcount has changed over time"
     )
-    st.plotly_chart(fig_trend, use_container_width=True)
+
+    st.plotly_chart(fig_trend, width="stretch")
 
     if len(trend) >= 2:
         first_count = int(trend.iloc[0]["headcount"])
         last_count = int(trend.iloc[-1]["headcount"])
         difference = last_count - first_count
-        direction = "increased" if difference > 0 else (
-            "decreased" if difference < 0 else "remained unchanged"
+
+        direction = (
+            "increased" if difference > 0
+            else "decreased" if difference < 0
+            else "remained unchanged"
         )
+
         st.caption(
             f"Insight: Headcount {direction} by "
             f"{abs(difference):,} employees across the selected period."
         )
     else:
-        st.caption("Insight: Select a wider period to compare headcount.")
+        st.caption(
+            "Insight: Select a wider reporting period to compare headcount."
+        )
 
+    # 2. Department workforce for the latest selected month
     st.subheader("Department workforce")
-    department_chart = departments[
-        departments["department_name"].isin(selected_departments)
+
+    department_chart = department_monthly[
+        (department_monthly["month_end"] == latest_month)
+        & department_monthly["department_name"].isin(
+            selected_departments
+        )
     ].sort_values("headcount", ascending=False)
 
     fig_department = px.bar(
@@ -164,58 +249,82 @@ try:
             "department_name": "Department",
             "headcount": "Employees"
         },
-        title="Engineering has the largest reported department headcount"
+        title="Department headcount in the latest selected month"
     )
-    st.plotly_chart(fig_department, use_container_width=True)
+
+    st.plotly_chart(fig_department, width="stretch")
 
     if not department_chart.empty:
-        largest = department_chart.iloc[0]
+        largest_department = department_chart.iloc[0]
+
         st.caption(
-            f"Insight: {largest['department_name']} has the highest "
-            f"reported headcount ({int(largest['headcount'])} employees)."
+            f"Insight: {largest_department['department_name']} has "
+            f"the highest headcount, with "
+            f"{int(largest_department['headcount']):,} employees "
+            f"in {latest_month.strftime('%B %Y')}."
         )
 
-    st.subheader("Employees by city")
-    fig_location = px.bar(
-        locations.sort_values("employees", ascending=False),
-        x="work_location",
+    # 3. Location-tier distribution
+    st.subheader("Employees by location tier")
+
+    fig_location_tier = px.bar(
+        location_tiers,
+        x="location_tier",
         y="employees",
-        labels={"work_location": "City", "employees": "Employees"},
-        title="Bengaluru has the largest reported workforce by city"
+        labels={
+            "location_tier": "Location tier",
+            "employees": "Employees"
+        },
+        title="Current workforce by location tier"
     )
-    st.plotly_chart(fig_location, use_container_width=True)
 
-    if not locations.empty:
-        largest_city = locations.sort_values(
-            "employees", ascending=False
-        ).iloc[0]
+    st.plotly_chart(fig_location_tier, width="stretch")
+
+    if not location_tiers.empty:
+        largest_tier = location_tiers.iloc[0]
+
         st.caption(
-            f"Insight: {largest_city['work_location']} has the most "
-            f"employees ({int(largest_city['employees'])})."
+            f"Insight: {largest_tier['location_tier']} locations "
+            f"have {int(largest_tier['employees']):,} employees."
         )
 
+    st.caption(
+        "Data note: Metro and Other are illustrative dashboard groupings, "
+        "not official company location classifications. Location-tier "
+        "figures show current employees and are not filtered by the "
+        "reporting period or department selection."
+    )
+
+    # 4. Work-mode distribution
     st.subheader("Work mode distribution")
+
     fig_mode = px.bar(
         work_modes.sort_values("employees", ascending=False),
         x="work_mode",
         y="employees",
-        labels={"work_mode": "Work mode", "employees": "Employees"},
-        title="Hybrid is the most common recorded work mode"
+        labels={
+            "work_mode": "Work mode",
+            "employees": "Employees"
+        },
+        title="Current workforce by recorded work mode"
     )
-    st.plotly_chart(fig_mode, use_container_width=True)
+
+    st.plotly_chart(fig_mode, width="stretch")
 
     if not work_modes.empty:
         largest_mode = work_modes.sort_values(
             "employees", ascending=False
         ).iloc[0]
+
         st.caption(
             f"Insight: {largest_mode['work_mode']} is the most common "
-            f"recorded work mode ({int(largest_mode['employees'])} employees)."
+            f"recorded work mode, with "
+            f"{int(largest_mode['employees']):,} employees."
         )
 
     st.caption(
-        "Data note: Department headcount and current employee distributions "
-        "come from different governed views. Their totals may differ."
+        "Data note: Work-mode figures represent current employees. "
+        "Headcount charts use historical month-end figures."
     )
 
 except Exception as error:

@@ -62,3 +62,19 @@ SELECT
 FROM dim_employee
 WHERE is_current = TRUE
 GROUP BY 1;
+
+-- Dashboard-defined location tiers for Task 5.
+-- These groups are illustrative, not official company classifications.
+CREATE OR REPLACE VIEW metric_dashboard_location_tier AS
+SELECT
+    CASE
+        WHEN work_location IN (
+            'Bengaluru', 'Chennai', 'Delhi NCR',
+            'Hyderabad', 'Mumbai', 'Pune'
+        ) THEN 'Metro'
+        ELSE 'Other'
+    END AS location_tier,
+    COUNT(DISTINCT employee_id) AS employees
+FROM dim_employee
+WHERE is_current = TRUE
+GROUP BY 1;
