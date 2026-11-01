@@ -417,6 +417,73 @@ def build_warehouse():
             SELECT * FROM calendar_df
         """)
         warehouse.unregister("calendar_df")
+        
+        # Load the holiday calendar from the master workbook.
+        holiday_file = (
+            PROJECT_DIR
+            / "data"
+            / "raw"
+            / "01_LedgerForge_Python_Master_Dataset.xlsx"
+        )
+
+        holidays = pd.read_excel(
+            holiday_file,
+            sheet_name="holidays",
+        )
+
+        holidays["holiday_date"] = pd.to_datetime(
+            holidays["holiday_date"],
+            errors="coerce",
+        ).dt.date
+
+        holidays = holidays.dropna(
+            subset=["holiday_date"]
+        )
+
+        warehouse.register("holiday_df", holidays)
+        warehouse.execute("""
+            CREATE OR REPLACE TABLE dim_holiday AS
+            SELECT * FROM holiday_df
+        """)
+        warehouse.unregister("holiday_df")
+
+        print(
+            f"Holiday dimension created: {len(holidays)} rows."
+        )
+
+        
+        # Add holiday and working-day flags to the date dimension.
+        warehouse.execute("""
+            ALTER TABLE dim_date
+            ADD COLUMN IF NOT EXISTS is_holiday BOOLEAN DEFAULT FALSE
+        """)
+
+        warehouse.execute("""
+            ALTER TABLE dim_date
+            ADD COLUMN IF NOT EXISTS holiday_name VARCHAR
+        """)
+
+        warehouse.execute("""
+            UPDATE dim_date
+            SET
+                is_holiday = TRUE,
+                holiday_name = h.holiday_name
+            FROM dim_holiday h
+            WHERE CAST(dim_date.date_key AS DATE) = h.holiday_date
+        """)
+
+        warehouse.execute("""
+            ALTER TABLE dim_date
+            ADD COLUMN IF NOT EXISTS is_weekday BOOLEAN DEFAULT FALSE
+        """)
+
+        warehouse.execute("""
+            UPDATE dim_date
+            SET is_weekday =
+                EXTRACT(ISODOW FROM CAST(date_key AS DATE)) BETWEEN 1 AND 5
+        """)
+
+
 
         print("Dimension tables created.")
 
@@ -584,6 +651,20 @@ def build_warehouse():
         print("\nAll warehouse validations passed.")
         print(f"Warehouse database: {WAREHOUSE_DB}")
         print(f"Reports folder: {REPORT_DIR}")
+
+    
+        # Load the metric views after warehouse validation succeeds.
+        metric_sql_path = (
+            Path(__file__).resolve().parent.parent
+            / "config"
+            / "metric_views.sql"
+        )
+
+        metric_sql = metric_sql_path.read_text(encoding="utf-8")
+        warehouse.execute(metric_sql)
+
+        print("Metric views loaded successfully.")
+
 
     finally:
         warehouse.close()

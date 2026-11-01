@@ -327,6 +327,388 @@ try:
         "Headcount charts use historical month-end figures."
     )
 
+
+    # Task 6: Attendance and leave trends
+
+    st.divider()
+    st.header("Task 6: Attendance and Leave Trends")
+
+    con = duckdb.connect(DATABASE, read_only=True)
+
+    attendance_trends = con.execute("""
+        SELECT
+            a.month_start,
+            a.department_id,
+            d.department_name,
+            a.attendance_rate_pct,
+            a.late_arrivals,
+            a.overtime_hours
+        FROM metric_attendance_trends a
+        LEFT JOIN dim_department d
+            ON a.department_id = d.department_id
+        ORDER BY a.month_start, d.department_name
+    """).df()
+
+    leave_trends = con.execute("""
+        SELECT
+            month_start,
+            leave_type_code,
+            leave_type_name,
+            approved_leave_days,
+            approved_requests
+        FROM metric_leave_trends
+        ORDER BY month_start, leave_type_name
+    """).df()
+
+    holidays = con.execute("""
+        SELECT
+            date_key,
+            holiday_name,
+            is_holiday
+        FROM dim_date
+        WHERE is_holiday = TRUE
+        ORDER BY date_key
+    """).df()
+
+    con.close()
+
+    attendance_trends["month_start"] = (
+        attendance_trends["month_start"].astype("datetime64[ns]")
+    )
+    leave_trends["month_start"] = (
+        leave_trends["month_start"].astype("datetime64[ns]")
+    )
+    holidays["date_key"] = holidays["date_key"].astype("datetime64[ns]")
+
+    task6_attendance = attendance_trends[
+        attendance_trends["department_name"].isin(selected_departments)
+        & (attendance_trends["month_start"].dt.date >= start_date)
+        & (attendance_trends["month_start"].dt.date <= end_date)
+    ]
+
+    task6_leave = leave_trends[
+        (leave_trends["month_start"].dt.date >= start_date)
+        & (leave_trends["month_start"].dt.date <= end_date)
+    ]
+
+    task6_holidays = holidays[
+        (holidays["date_key"].dt.date >= start_date)
+        & (holidays["date_key"].dt.date <= end_date)
+    ]
+
+    st.caption(
+        "Attendance and leave trends use the selected reporting period. "
+        "Department selection applies to attendance metrics."
+    )
+
+    # 1. Monthly attendance rate by department
+    st.subheader("Monthly attendance rate")
+
+    if task6_attendance.empty:
+        st.warning("No attendance data matches the selected filters.")
+    else:
+        fig_attendance = px.line(
+            task6_attendance,
+            x="month_start",
+            y="attendance_rate_pct",
+            color="department_name",
+            markers=True,
+            labels={
+                "month_start": "Month",
+                "attendance_rate_pct": "Attendance rate (%)",
+                "department_name": "Department"
+            },
+            title="Monthly attendance rate by department"
+        )
+
+        st.plotly_chart(fig_attendance, width="stretch")
+
+    # 2. Late arrivals
+    st.subheader("Late arrivals by month")
+
+    late_monthly = (
+        task6_attendance
+        .groupby("month_start", as_index=False)["late_arrivals"]
+        .sum()
+        .sort_values("month_start")
+    )
+
+    if not late_monthly.empty:
+        fig_late = px.bar(
+            late_monthly,
+            x="month_start",
+            y="late_arrivals",
+            labels={
+                "month_start": "Month",
+                "late_arrivals": "Late arrivals"
+            },
+            title="Monthly late arrivals across selected departments"
+        )
+
+        st.plotly_chart(fig_late, width="stretch")
+
+    # 3. Overtime hours
+    st.subheader("Overtime hours by month")
+
+    overtime_monthly = (
+        task6_attendance
+        .groupby("month_start", as_index=False)["overtime_hours"]
+        .sum()
+        .sort_values("month_start")
+    )
+
+    if not overtime_monthly.empty:
+        fig_overtime = px.bar(
+            overtime_monthly,
+            x="month_start",
+            y="overtime_hours",
+            labels={
+                "month_start": "Month",
+                "overtime_hours": "Overtime hours"
+            },
+            title="Monthly overtime hours across selected departments"
+        )
+
+        st.plotly_chart(fig_overtime, width="stretch")
+
+    # 4. Approved leave days by type
+    st.subheader("Leave trends by type")
+
+    if task6_leave.empty:
+        st.warning("No leave data matches the selected reporting period.")
+    else:
+        leave_monthly = (
+            task6_leave
+            .groupby(
+                ["month_start", "leave_type_name"],
+                as_index=False
+            )["approved_leave_days"]
+            .sum()
+        )
+
+        fig_leave = px.bar(
+            leave_monthly,
+            x="month_start",
+            y="approved_leave_days",
+            color="leave_type_name",
+            barmode="stack",
+            labels={
+                "month_start": "Month",
+                "approved_leave_days": "Approved leave days",
+                "leave_type_name": "Leave type"
+            },
+            title="Monthly approved leave days by type"
+        )
+
+        st.plotly_chart(fig_leave, width="stretch")
+
+        leave_summary = (
+            task6_leave
+            .groupby("leave_type_name", as_index=False)
+            ["approved_leave_days"]
+            .sum()
+            .sort_values("approved_leave_days", ascending=False)
+        )
+
+        st.dataframe(leave_summary, hide_index=True)
+
+    # 4. Approved leave days by type
+    st.subheader("Leave trends by type")
+
+    if task6_leave.empty:
+        st.warning("No leave data matches the selected reporting period.")
+    else:
+        leave_monthly = (
+            task6_leave
+            .groupby(
+                ["month_start", "leave_type_name"],
+                as_index=False
+            )["approved_leave_days"]
+            .sum()
+        )
+
+        fig_leave = px.bar(
+            leave_monthly,
+            x="month_start",
+            y="approved_leave_days",
+            color="leave_type_name",
+            barmode="stack",
+            labels={
+                "month_start": "Month",
+                "approved_leave_days": "Approved leave days",
+                "leave_type_name": "Leave type"
+            },
+            title="Monthly approved leave days by type"
+        )
+
+        st.plotly_chart(
+    fig_leave,
+    width="stretch",
+    key="task6_leave_chart"
+)
+
+        leave_summary = (
+            task6_leave
+            .groupby("leave_type_name", as_index=False)
+            ["approved_leave_days"]
+            .sum()
+            .sort_values("approved_leave_days", ascending=False)
+        )
+
+        st.dataframe(leave_summary, hide_index=True)
+
+    # 5. Holiday calendar and long-weekend indicators
+    st.subheader("Holidays and long weekends")
+
+    if task6_holidays.empty:
+        st.info("No listed holidays fall within the selected period.")
+    else:
+        holiday_calendar = task6_holidays.copy()
+
+        # Find the weekday for each holiday
+        holiday_calendar["weekday"] = (
+            holiday_calendar["date_key"].dt.day_name()
+        )
+
+        # Friday or Monday holidays can create a long weekend
+        holiday_calendar["long_weekend"] = (
+            holiday_calendar["date_key"].dt.dayofweek.isin([0, 4])
+        )
+
+        holiday_calendar["calendar_note"] = (
+            holiday_calendar["long_weekend"].map({
+                True: "Potential long weekend",
+                False: "Check nearby weekend"
+            })
+        )
+
+        holiday_calendar = holiday_calendar.rename(
+            columns={
+                "date_key": "Holiday date",
+                "holiday_name": "Holiday"
+            }
+        )
+
+        st.dataframe(
+            holiday_calendar[
+                [
+                    "Holiday date",
+                    "Holiday",
+                    "weekday",
+                    "calendar_note"
+                ]
+            ],
+            hide_index=True
+        )
+
+        long_weekend_count = int(
+            holiday_calendar["long_weekend"].sum()
+        )
+
+        st.metric(
+            "Potential long-weekend holidays",
+            long_weekend_count
+        )
+
+        st.caption(
+            "These are potential long weekends based on Friday or Monday "
+            "holidays. Actual company leave arrangements may differ. "
+            "The workbook's holiday calendar is a sample calendar."
+        )
+
+    # 6. Identify unusual months
+    st.subheader("Unusual attendance months")
+
+    if len(task6_attendance) > 0:
+        monthly_summary = (
+            task6_attendance
+            .groupby("month_start", as_index=False)
+            .agg(
+                attendance_rate_pct=("attendance_rate_pct", "mean"),
+                late_arrivals=("late_arrivals", "sum"),
+                overtime_hours=("overtime_hours", "sum")
+            )
+            .sort_values("month_start")
+        )
+
+        average_rate = monthly_summary[
+            "attendance_rate_pct"
+        ].mean()
+
+        monthly_summary["rate_difference"] = (
+            monthly_summary["attendance_rate_pct"] - average_rate
+        )
+
+        unusual_months = monthly_summary.copy()
+        unusual_months["absolute_difference"] = (
+            unusual_months["rate_difference"].abs()
+        )
+
+        unusual_months = unusual_months.nlargest(
+            3, "absolute_difference"
+        ).sort_values("month_start")
+
+        st.caption(
+            "Unusual months are the three months with attendance rates "
+            "furthest from the selected period's average. This identifies "
+            "statistical deviations, not proven causes."
+        )
+
+        st.dataframe(
+            unusual_months[
+                [
+                    "month_start",
+                    "attendance_rate_pct",
+                    "rate_difference",
+                    "late_arrivals",
+                    "overtime_hours"
+                ]
+            ],
+            hide_index=True
+        )
+
+        # Three numeric insights
+        st.subheader("Key numeric insights")
+
+        best_month = monthly_summary.loc[
+            monthly_summary["attendance_rate_pct"].idxmax()
+        ]
+
+        lowest_month = monthly_summary.loc[
+            monthly_summary["attendance_rate_pct"].idxmin()
+        ]
+
+        highest_overtime = monthly_summary.loc[
+            monthly_summary["overtime_hours"].idxmax()
+        ]
+
+        col1, col2, col3 = st.columns(3)
+
+        col1.metric(
+            "Highest monthly attendance rate",
+            f"{best_month['attendance_rate_pct']:.2f}%",
+            best_month["month_start"].strftime("%b %Y")
+        )
+
+        col2.metric(
+            "Lowest monthly attendance rate",
+            f"{lowest_month['attendance_rate_pct']:.2f}%",
+            lowest_month["month_start"].strftime("%b %Y")
+        )
+
+        col3.metric(
+            "Highest monthly overtime",
+            f"{highest_overtime['overtime_hours']:,.1f} hours",
+            highest_overtime["month_start"].strftime("%b %Y")
+        )
+
+    else:
+        st.info(
+            "Select departments and a reporting period with attendance data "
+            "to see unusual months and insights."
+        )
+
+
 except Exception as error:
     st.error("The dashboard could not load the metric views.")
     st.exception(error)

@@ -110,3 +110,97 @@ SELECT * FROM (VALUES
 ('M28','Forecast error (MAPE)','Average absolute percentage forecast error','fact_forecast / fact_headcount','Department x month','AI/ML',NULL,'BLOCKED: FORECAST TABLE MISSING')
 ) AS t(metric_id, metric_name, business_definition, source_table, grain, owner_team, minimum_group_size, implementation_status);
 
+
+-- Task 6: Attendance and leave trend metrics
+
+
+CREATE OR REPLACE VIEW metric_attendance_trends AS
+SELECT
+    DATE_TRUNC(
+        'month',
+        CAST(a.attendance_date AS DATE)
+    )::DATE AS month_start,
+
+    a.department_id,
+
+    COUNT(*) FILTER (
+        WHERE d.is_weekday = TRUE
+          AND COALESCE(d.is_holiday, FALSE) = FALSE
+    ) AS working_day_records,
+
+    COUNT(DISTINCT a.employee_id) AS employees,
+
+    SUM(
+        CASE
+            WHEN d.is_weekday = TRUE
+             AND COALESCE(d.is_holiday, FALSE) = FALSE
+             AND UPPER(a.status) IN ('PRESENT', 'WFH')
+                THEN 1.0
+            WHEN d.is_weekday = TRUE
+             AND COALESCE(d.is_holiday, FALSE) = FALSE
+             AND UPPER(a.status) = 'HALF_DAY_UNPAID'
+                THEN 0.5
+            ELSE 0.0
+        END
+    ) AS attendance_equivalent_days,
+
+    ROUND(
+        100.0 * SUM(
+            CASE
+                WHEN UPPER(a.status) IN ('PRESENT', 'WFH')
+                    THEN 1.0
+                WHEN UPPER(a.status) = 'HALF_DAY_UNPAID'
+                    THEN 0.5
+                ELSE 0.0
+            END
+        ) FILTER (
+            WHERE d.is_weekday = TRUE
+              AND COALESCE(d.is_holiday, FALSE) = FALSE
+        ) / NULLIF(
+            COUNT(*) FILTER (
+                WHERE d.is_weekday = TRUE
+                  AND COALESCE(d.is_holiday, FALSE) = FALSE
+            ),
+            0
+        ),
+        2
+    ) AS attendance_rate_pct,
+
+    COUNT(*) FILTER (
+        WHERE UPPER(a.late_flag) = 'Y'
+          AND d.is_weekday = TRUE
+          AND COALESCE(d.is_holiday, FALSE) = FALSE
+    ) AS late_arrivals,
+
+    SUM(
+        CASE
+            WHEN d.is_weekday = TRUE
+             AND COALESCE(d.is_holiday, FALSE) = FALSE
+                THEN COALESCE(a.overtime_hours, 0)
+            ELSE 0
+        END
+    ) AS overtime_hours
+
+FROM fact_attendance a
+JOIN dim_date d
+    ON CAST(a.attendance_date AS DATE) = d.date_key
+
+WHERE TRY_CAST(a.attendance_date AS DATE) IS NOT NULL
+
+GROUP BY 1, 2;
+
+
+CREATE OR REPLACE VIEW metric_leave_trends AS
+SELECT
+    DATE_TRUNC('month', CAST(l.start_date AS DATE))::DATE
+        AS month_start,
+    l.leave_type_code,
+    t.leave_type_name,
+    SUM(COALESCE(l.days, 0)) AS approved_leave_days,
+    COUNT(*) AS approved_requests
+FROM fact_leave l
+LEFT JOIN dim_leave_type t
+    ON l.leave_type_code = t.leave_type_code
+WHERE LOWER(TRIM(l.status)) = 'approved'
+  AND TRY_CAST(l.start_date AS DATE) IS NOT NULL
+GROUP BY 1, 2, 3;
