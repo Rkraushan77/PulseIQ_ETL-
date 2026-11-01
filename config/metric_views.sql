@@ -204,3 +204,30 @@ LEFT JOIN dim_leave_type t
 WHERE LOWER(TRIM(l.status)) = 'approved'
   AND TRY_CAST(l.start_date AS DATE) IS NOT NULL
 GROUP BY 1, 2, 3;
+
+
+-- Task 7: Actual employee exits by month and department
+-- Suppress groups with fewer than 5 exits.
+
+CREATE OR REPLACE VIEW metric_attrition_actual AS
+SELECT
+    DATE_TRUNC(
+        'month',
+        CAST(exit_date AS DATE)
+    )::DATE AS month_start,
+    department_id,
+    COUNT(DISTINCT employee_id) AS exits,
+    COUNT(DISTINCT employee_id) FILTER (
+        WHERE LOWER(TRIM(exit_type)) = 'voluntary'
+    ) AS voluntary_exits,
+    COUNT(DISTINCT employee_id) FILTER (
+        WHERE LOWER(TRIM(exit_type)) = 'involuntary'
+    ) AS involuntary_exits,
+    COUNT(DISTINCT employee_id) FILTER (
+        WHERE LOWER(TRIM(exit_type)) = 'contract end'
+    ) AS contract_end_exits,
+    ROUND(AVG(tenure_years), 2) AS average_tenure_years
+FROM source_employees
+WHERE TRY_CAST(exit_date AS DATE) IS NOT NULL
+GROUP BY 1, 2
+HAVING COUNT(DISTINCT employee_id) >= 5;

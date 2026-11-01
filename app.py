@@ -709,6 +709,180 @@ try:
         )
 
 
+
+    # Task 7: Actual attrition analytics
+
+    st.divider()
+    st.header("Task 7: Attrition Analytics")
+    st.subheader("Actual employee exits")
+
+    con = duckdb.connect(DATABASE, read_only=True)
+
+    attrition_data = con.execute("""
+        SELECT
+            a.month_start,
+            a.department_id,
+            d.department_name,
+            a.exits,
+            a.voluntary_exits,
+            a.involuntary_exits,
+            a.contract_end_exits,
+            a.average_tenure_years
+        FROM metric_attrition_actual a
+        LEFT JOIN dim_department d
+            ON a.department_id = d.department_id
+        ORDER BY a.month_start, d.department_name
+    """).df()
+
+    con.close()
+
+    if attrition_data.empty:
+        st.info(
+            "No exit groups meet the minimum privacy threshold "
+            "for the available data."
+        )
+    else:
+        # Monthly exits across departments
+        monthly_exits = (
+            attrition_data
+            .groupby("month_start", as_index=False)["exits"]
+            .sum()
+            .sort_values("month_start")
+        )
+
+        fig_exits = px.bar(
+            monthly_exits,
+            x="month_start",
+            y="exits",
+            labels={
+                "month_start": "Month",
+                "exits": "Exits"
+            },
+            title="Monthly actual exits (groups with at least 5 exits)"
+        )
+
+        st.plotly_chart(
+            fig_exits,
+            width="stretch",
+            key="task7_monthly_exits"
+        )
+
+        # Exits by department
+        department_exits = (
+            attrition_data
+            .groupby("department_name", as_index=False)["exits"]
+            .sum()
+            .sort_values("exits", ascending=False)
+        )
+
+        fig_department_exits = px.bar(
+            department_exits,
+            x="department_name",
+            y="exits",
+            labels={
+                "department_name": "Department",
+                "exits": "Exits"
+            },
+            title="Actual exits by department"
+        )
+
+        st.plotly_chart(
+            fig_department_exits,
+            width="stretch",
+            key="task7_department_exits"
+        )
+
+        # Exit types
+        exit_type_summary = (
+            attrition_data[
+                [
+                    "voluntary_exits",
+                    "involuntary_exits",
+                    "contract_end_exits"
+                ]
+            ]
+            .sum()
+            .reset_index()
+        )
+
+        exit_type_summary.columns = ["Exit type", "Exits"]
+
+        exit_type_summary["Exit type"] = (
+            exit_type_summary["Exit type"].replace({
+                "voluntary_exits": "Voluntary",
+                "involuntary_exits": "Involuntary",
+                "contract_end_exits": "Contract End"
+            })
+        )
+
+        fig_exit_types = px.bar(
+            exit_type_summary,
+            x="Exit type",
+            y="Exits",
+            title="Exit types in groups meeting the privacy threshold"
+        )
+
+        st.plotly_chart(
+            fig_exit_types,
+            width="stretch",
+            key="task7_exit_types"
+        )
+
+        # Average tenure at exit
+        st.subheader("Average tenure at exit")
+
+        st.dataframe(
+            attrition_data[
+                [
+                    "month_start",
+                    "department_name",
+                    "average_tenure_years"
+                ]
+            ].rename(columns={
+                "month_start": "Month",
+                "department_name": "Department",
+                "average_tenure_years": "Average tenure (years)"
+            }),
+            hide_index=True
+        )
+        
+    # Predicted attrition risk
+    st.divider()
+    st.subheader("Predicted, not certain")
+
+    st.info(
+        "Employee attrition predictions are not available yet. "
+        "A validated prediction model and risk dataset must be "
+        "created before risk estimates can be displayed. "
+        "Actual employee exits shown above are historical data, "
+        "not predictions of future exits."
+    )
+        
+    # Three biggest historical findings
+    st.divider()
+    st.subheader("Three Key Historical Findings")
+
+    st.markdown(
+        """
+        1. **Total exits:** 304 employees exited during the
+           historical period in the source dataset.
+
+        2. **Voluntary exits:** 267 of 304 exits were voluntary
+           (approximately 87.8%).
+
+        3. **Highest annual exit count:** 2025 recorded 69 exits.
+           The 2026 figure covers January to September only.
+        """
+    )
+        
+    # Privacy note
+    st.caption(
+        "Privacy note: Groups with fewer than 5 employee exits "
+        "are suppressed to reduce the risk of identifying "
+        "individual employees. Therefore, the charts may show "
+        "fewer exits than the overall historical source totals."
+    )
+
 except Exception as error:
     st.error("The dashboard could not load the metric views.")
     st.exception(error)
