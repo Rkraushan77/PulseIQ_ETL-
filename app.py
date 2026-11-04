@@ -1196,6 +1196,193 @@ try:
                     "team size, sprint scope, task mix, and story-point estimation practices differ."
                 )
 
+
+    # Task 9: Payroll Cost Dashboard and Reconciliation
+    st.divider()
+    st.header("Task 9: Payroll Cost Dashboard")
+
+    payroll_con = duckdb.connect(DATABASE, read_only=True)
+
+    payroll = payroll_con.execute("""
+        SELECT
+            p.period_start,
+            p.department_id,
+            d.department_name,
+            p.gross_pay,
+            p.net_pay,
+            p.employer_cost,
+            p.paid_employees
+        FROM metric_payroll_monthly p
+        LEFT JOIN dim_department d
+            ON p.department_id = d.department_id
+        ORDER BY p.period_start, d.department_name
+    """).df()
+
+    payroll_con.close()
+
+    payroll["period_start"] = pd.to_datetime(payroll["period_start"])
+
+    # Keep only aggregate groups with at least five employees
+    payroll = payroll[payroll["paid_employees"] >= 5].copy()
+
+    if payroll.empty:
+        st.warning("No payroll data is available for reporting.")
+    else:
+        payroll_departments = sorted(
+            payroll["department_name"].dropna().unique().tolist()
+        )
+
+        payroll_col1, payroll_col2 = st.columns(2)
+
+        with payroll_col1:
+            payroll_selected_departments = st.multiselect(
+                "Payroll departments",
+                payroll_departments,
+                default=payroll_departments,
+                key="payroll_departments"
+            )
+
+        with payroll_col2:
+            payroll_months = sorted(
+                payroll["period_start"].dropna().unique()
+            )
+            payroll_start, payroll_end = st.select_slider(
+                "Payroll reporting period",
+                options=payroll_months,
+                value=(payroll_months[0], payroll_months[-1]),
+                format_func=lambda value: value.strftime("%b %Y"),
+                key="payroll_period"
+            )
+
+        payroll_filtered = payroll[
+            payroll["department_name"].isin(
+                payroll_selected_departments
+            )
+            & (payroll["period_start"] >= payroll_start)
+            & (payroll["period_start"] <= payroll_end)
+        ].copy()
+
+        if payroll_filtered.empty:
+            st.warning("No payroll records match the selected filters.")
+        else:
+            total_gross = payroll_filtered["gross_pay"].sum()
+            total_net = payroll_filtered["net_pay"].sum()
+            total_employer = payroll_filtered["employer_cost"].sum()
+
+            # Cost per employee-month, using each department-month group
+            total_employee_months = payroll_filtered[
+                "paid_employees"
+            ].sum()
+
+            cost_per_employee = (
+                total_employer / total_employee_months
+                if total_employee_months > 0 else 0
+            )
+
+            k1, k2, k3, k4 = st.columns(4)
+
+            k1.metric("Gross Pay", f"₹{total_gross:,.0f}")
+            k2.metric("Net Pay", f"₹{total_net:,.0f}")
+            k3.metric("Employer Cost", f"₹{total_employer:,.0f}")
+            k4.metric(
+                "Employer Cost per Employee-Month",
+                f"₹{cost_per_employee:,.0f}"
+            )
+
+            st.subheader("Monthly Payroll Cost Trend")
+
+            monthly_payroll = (
+                payroll_filtered.groupby("period_start", as_index=False)
+                .agg(
+                    gross_pay=("gross_pay", "sum"),
+                    net_pay=("net_pay", "sum"),
+                    employer_cost=("employer_cost", "sum")
+                )
+                .sort_values("period_start")
+            )
+
+            monthly_long = monthly_payroll.melt(
+                id_vars="period_start",
+                value_vars=["gross_pay", "net_pay", "employer_cost"],
+                var_name="cost_type",
+                value_name="amount"
+            )
+
+            fig_payroll_trend = px.line(
+                monthly_long,
+                x="period_start",
+                y="amount",
+                color="cost_type",
+                markers=True,
+                labels={
+                    "period_start": "Month",
+                    "amount": "Amount (₹)",
+                    "cost_type": "Cost Type"
+                },
+                title="Gross, Net and Employer Cost by Month"
+            )
+
+            st.plotly_chart(fig_payroll_trend, width="stretch")
+
+            st.subheader("Payroll Cost by Department and Month")
+
+            fig_payroll_department = px.bar(
+                payroll_filtered,
+                x="department_name",
+                y="employer_cost",
+                color="period_start",
+                barmode="group",
+                labels={
+                    "department_name": "Department",
+                    "employer_cost": "Employer Cost (₹)",
+                    "period_start": "Month"
+                },
+                title="Employer Cost by Department and Month"
+            )
+
+            st.plotly_chart(fig_payroll_department, width="stretch")
+
+            st.subheader("Department Payroll Summary")
+
+            department_summary = (
+                payroll_filtered.groupby(
+                    "department_name", as_index=False
+                )
+                .agg(
+                    gross_pay=("gross_pay", "sum"),
+                    net_pay=("net_pay", "sum"),
+                    employer_cost=("employer_cost", "sum"),
+                    employee_months=("paid_employees", "sum")
+                )
+            )
+
+            department_summary["cost_per_employee_month"] = (
+                department_summary["employer_cost"]
+                / department_summary["employee_months"]
+            )
+
+            department_summary = department_summary.rename(columns={
+                "department_name": "Department",
+                "gross_pay": "Gross Pay (₹)",
+                "net_pay": "Net Pay (₹)",
+                "employer_cost": "Employer Cost (₹)",
+                "employee_months": "Employee-Months",
+                "cost_per_employee_month": "Cost per Employee-Month (₹)"
+            })
+
+            st.dataframe(
+                department_summary.round(2),
+                hide_index=True,
+                width="stretch"
+            )
+
+            st.caption(
+                "Privacy: only department-level totals and averages are shown. "
+                "Department-month groups with fewer than five employees "
+                "are excluded. Cost per employee is calculated per "
+                "employee-month, not per unique employee across the full period."
+            )
+
 except Exception as error:
     st.error("The dashboard could not load the metric views.")
     st.exception(error)
