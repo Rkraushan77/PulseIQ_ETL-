@@ -2,6 +2,8 @@
 import duckdb
 import streamlit as st
 import plotly.express as px
+import pandas as pd
+import zipfile
 from datetime import date
 
 st.set_page_config(
@@ -882,6 +884,317 @@ try:
         "individual employees. Therefore, the charts may show "
         "fewer exits than the overall historical source totals."
     )
+
+
+    # Task 8: Team Productivity Dashboard
+    st.divider()
+    st.header("Task 8: Team Productivity Dashboard")
+
+    TASK8_ZIP = "data/raw/CSV.zip"
+
+    try:
+        with zipfile.ZipFile(TASK8_ZIP, "r") as task_zip:
+            task_data = pd.read_csv(task_zip.open("csv/fact_task.csv"))
+            team_data = pd.read_csv(task_zip.open("csv/dim_team.csv"))
+            sprint_data = pd.read_csv(task_zip.open("csv/dim_sprint.csv"))
+    except FileNotFoundError:
+        st.warning(
+            "Task 8 data ZIP was not found. Copy the provided CSV.zip file "
+            "to data/raw/CSV.zip. The ZIP does not need to be extracted."
+        )
+        task_data = pd.DataFrame()
+        team_data = pd.DataFrame()
+        sprint_data = pd.DataFrame()
+    except (KeyError, zipfile.BadZipFile) as error:
+        st.error(f"Could not read the Task 8 ZIP archive: {error}")
+        task_data = pd.DataFrame()
+        team_data = pd.DataFrame()
+        sprint_data = pd.DataFrame()
+
+    if not task_data.empty:
+        # Parse dates once and normalize status text for reliable filtering.
+        for date_col in ["created_date", "started_date", "due_date", "completed_date"]:
+            task_data[date_col] = pd.to_datetime(task_data[date_col], errors="coerce")
+        sprint_data["start_date"] = pd.to_datetime(sprint_data["start_date"], errors="coerce")
+        sprint_data["end_date"] = pd.to_datetime(sprint_data["end_date"], errors="coerce")
+        task_data["status"] = task_data["status"].astype(str).str.strip().str.title()
+        task_data["story_points"] = pd.to_numeric(task_data["story_points"], errors="coerce").fillna(0)
+        task_data["reopened_count"] = pd.to_numeric(task_data["reopened_count"], errors="coerce").fillna(0)
+        task_data["cycle_time_days"] = pd.to_numeric(task_data["cycle_time_days"], errors="coerce")
+
+        st.caption(
+            "Source: provided CSV.zip. Metrics follow metric_dictionary.csv. "
+            "Velocity is for each team's own sprint trend and should not be used to rank teams."
+        )
+
+        team_names = team_data.sort_values("team_name")["team_name"].tolist()
+        selected_team_names = st.multiselect(
+            "Teams", team_names, default=team_names, key="task8_teams"
+        )
+        sprint_data = sprint_data.sort_values("start_date").copy()
+        sprint_order = sprint_data["sprint_name"].tolist()
+        selected_sprint_names = st.multiselect(
+            "Sprints",
+            sprint_order,
+            default=sprint_order,
+            key="task8_sprints"
+        )
+
+        selected_team_ids = team_data.loc[
+            team_data["team_name"].isin(selected_team_names), "team_id"
+        ].tolist()
+        selected_sprint_ids = sprint_data.loc[
+            sprint_data["sprint_name"].isin(selected_sprint_names), "sprint_id"
+        ].tolist()
+
+        filtered_tasks = task_data[
+            task_data["team_id"].isin(selected_team_ids)
+            & task_data["sprint_id"].isin(selected_sprint_ids)
+        ].copy()
+
+        if filtered_tasks.empty:
+            st.info("Select at least one team and one sprint to display results.")
+        else:
+            done_tasks = filtered_tasks[filtered_tasks["status"] == "Done"]
+            non_cancelled = filtered_tasks[filtered_tasks["status"] != "Cancelled"]
+            valid_cycle = done_tasks[
+                done_tasks["started_date"].notna()
+                & done_tasks["completed_date"].notna()
+                & (done_tasks["completed_date"] >= done_tasks["started_date"])
+            ]
+            on_time_flag = done_tasks["completed_on_time"].astype(str).str.upper().str.strip()
+            valid_on_time = on_time_flag.isin(["Y", "N"])
+            on_time_rate = (
+                100 * (on_time_flag[valid_on_time] == "Y").mean()
+                if valid_on_time.any() else None
+            )
+            completion_rate = (
+                100 * len(done_tasks) / len(non_cancelled)
+                if len(non_cancelled) else None
+            )
+
+            k1, k2, k3, k4, k5 = st.columns(5)
+            k1.metric("Tasks in selection", f"{len(filtered_tasks):,}")
+            k2.metric("Done tasks", f"{len(done_tasks):,}")
+            k3.metric("Completion rate", f"{completion_rate:.1f}%" if completion_rate is not None else "N/A")
+            k4.metric("On-time rate", f"{on_time_rate:.1f}%" if on_time_rate is not None else "N/A")
+            k5.metric("Blocked tasks", f"{(filtered_tasks['status'] == 'Blocked').sum():,}")
+
+            team_sprint = (
+                filtered_tasks.assign(
+                    completed_points=filtered_tasks["story_points"].where(
+                        filtered_tasks["status"] == "Done", 0
+                    ),
+                    reopened_task=(filtered_tasks["reopened_count"] > 0).astype(int),
+                    blocked_task=(filtered_tasks["status"] == "Blocked").astype(int),
+                    cancelled_task=(filtered_tasks["status"] == "Cancelled").astype(int)
+                )
+                .groupby(["team_id", "sprint_id"], as_index=False)
+                .agg(
+                    velocity=("completed_points", "sum"),
+                    task_count=("task_id", "count"),
+                    blocked_tasks=("blocked_task", "sum"),
+                    reopened_tasks=("reopened_task", "sum"),
+                    cancelled_tasks=("cancelled_task", "sum")
+                )
+                .merge(team_data[["team_id", "team_name"]], on="team_id", how="left")
+                .merge(sprint_data[["sprint_id", "sprint_name", "start_date"]], on="sprint_id", how="left")
+                .sort_values("start_date")
+            )
+
+            st.subheader("Velocity by team and sprint")
+            st.plotly_chart(
+                px.line(
+                    team_sprint, x="sprint_name", y="velocity", color="team_name",
+                    markers=True, labels={"sprint_name": "Sprint", "velocity": "Completed story points", "team_name": "Team"},
+                    title="Completed story points across each team's sprints",
+                    category_orders={"sprint_name": sprint_order}
+                ),
+                width="stretch", key="task8_velocity"
+            )
+
+            st.subheader("Average cycle time by team and sprint")
+            cycle_source = valid_cycle.merge(
+                team_data[["team_id", "team_name"]], on="team_id", how="left"
+            ).merge(
+                sprint_data[["sprint_id", "sprint_name", "start_date"]], on="sprint_id", how="left"
+            )
+            cycle_summary = cycle_source.groupby(
+                ["team_name", "sprint_name", "start_date"], as_index=False
+            )["cycle_time_days"].mean()
+            if not cycle_summary.empty:
+                st.plotly_chart(
+                    px.line(
+                        cycle_summary, x="sprint_name", y="cycle_time_days",
+                        color="team_name", markers=True,
+                        labels={"sprint_name": "Sprint", "cycle_time_days": "Average cycle time (days)", "team_name": "Team"},
+                        title="Average valid cycle time",
+                        category_orders={"sprint_name": sprint_order}
+                    ),
+                    width="stretch", key="task8_cycle_time"
+                )
+            else:
+                st.info("No valid completed-task cycle times in this selection.")
+
+            st.subheader("Blocked and reopened work")
+            work_summary = team_sprint.groupby("team_name", as_index=False)[
+                ["blocked_tasks", "reopened_tasks", "cancelled_tasks"]
+            ].sum()
+            if not work_summary.empty:
+                st.plotly_chart(
+                    px.bar(
+                        work_summary, x="team_name",
+                        y=["blocked_tasks", "reopened_tasks", "cancelled_tasks"],
+                        barmode="group", labels={"value": "Task count", "team_name": "Team", "variable": "Work type"},
+                        title="Blocked, reopened, and cancelled tasks"
+                    ),
+                    width="stretch", key="task8_blocked_reopened"
+                )
+
+            st.subheader("On-time delivery rate by team")
+            done_with_flags = done_tasks.copy()
+            done_with_flags["on_time_valid"] = done_with_flags[
+                "completed_on_time"
+            ].astype(str).str.upper().str.strip().isin(["Y", "N"])
+            done_with_flags["on_time_yes"] = (
+                done_with_flags["completed_on_time"].astype(str).str.upper().str.strip() == "Y"
+            )
+            ontime_summary = done_with_flags[done_with_flags["on_time_valid"]].groupby(
+                "team_id", as_index=False
+            ).agg(
+                eligible_done_tasks=("task_id", "count"),
+                on_time_tasks=("on_time_yes", "sum")
+            ).merge(team_data[["team_id", "team_name"]], on="team_id", how="left")
+            if not ontime_summary.empty:
+                ontime_summary["on_time_rate_pct"] = (
+                    100 * ontime_summary["on_time_tasks"] / ontime_summary["eligible_done_tasks"]
+                )
+                st.plotly_chart(
+                    px.bar(
+                        ontime_summary, x="team_name", y="on_time_rate_pct",
+                        labels={"team_name": "Team", "on_time_rate_pct": "On-time rate (%)"},
+                        title="On-time delivery rate by team (valid Y/N flags only)"
+                    ),
+                    width="stretch", key="task8_ontime"
+                )
+
+            st.subheader("Data-quality exclusions")
+            invalid_cycle_count = int((
+                done_tasks["started_date"].isna()
+                | done_tasks["completed_date"].isna()
+                | (done_tasks["completed_date"] < done_tasks["started_date"])
+            ).sum())
+            st.write(
+                f"Done tasks excluded from cycle-time calculation because dates are missing "
+                f"or completion precedes start: **{invalid_cycle_count:,}**."
+            )
+            st.caption(
+                "Cancelled tasks are excluded from completion-rate denominator, velocity, "
+                "and on-time delivery. Missing/invalid cycle-time records are not treated as zero."
+            )
+
+            st.subheader("Team sprint summary")
+            st.dataframe(
+                team_sprint[[
+                    "team_name", "sprint_name", "task_count", "velocity",
+                    "blocked_tasks", "reopened_tasks", "cancelled_tasks"
+                ]].rename(columns={
+                    "team_name": "Team", "sprint_name": "Sprint", "task_count": "Tasks",
+                    "velocity": "Velocity (story points)", "blocked_tasks": "Blocked",
+                    "reopened_tasks": "Tasks reopened", "cancelled_tasks": "Cancelled"
+                }),
+                hide_index=True, width="stretch"
+            )
+
+            # Two-team source-data cross-check: recompute key metrics directly
+            # from the filtered task rows, then display the same results clearly.
+            st.subheader("Two-team metric verification")
+            verification_teams = team_data[
+                team_data["team_name"].isin(selected_team_names)
+            ].sort_values("team_name")["team_name"].head(2).tolist()
+            verification_rows = []
+            for verification_team in verification_teams:
+                source_rows = filtered_tasks[
+                    filtered_tasks["team_id"].isin(
+                        team_data.loc[team_data["team_name"] == verification_team, "team_id"]
+                    )
+                ]
+                source_done = source_rows[source_rows["status"] == "Done"]
+                source_non_cancelled = source_rows[source_rows["status"] != "Cancelled"]
+                source_flags = source_done["completed_on_time"].astype(str).str.strip().str.upper()
+                source_valid_flags = source_flags.isin(["Y", "N"])
+                source_valid_cycle = source_done[
+                    source_done["started_date"].notna()
+                    & source_done["completed_date"].notna()
+                    & (source_done["completed_date"] >= source_done["started_date"])
+                ]
+                verification_rows.append({
+                    "Team": verification_team,
+                    "Source task rows": len(source_rows),
+                    "Done rows": len(source_done),
+                    "Non-cancelled denominator": len(source_non_cancelled),
+                    "Completion rate (%)": round(100 * len(source_done) / len(source_non_cancelled), 2) if len(source_non_cancelled) else None,
+                    "Valid on-time flags": int(source_valid_flags.sum()),
+                    "On-time rate (%)": round(100 * (source_flags[source_valid_flags] == "Y").mean(), 2) if source_valid_flags.any() else None,
+                    "Valid cycle-time rows": len(source_valid_cycle),
+                    "Velocity (points)": round(source_done["story_points"].sum(), 2)
+                })
+            if verification_rows:
+                st.dataframe(pd.DataFrame(verification_rows), hide_index=True, width="stretch")
+                st.caption(
+                    "Cross-checks are recalculated from the selected source CSV rows. "
+                    "To complete the assignment's independent manual audit, compare these two teams' "
+                    "counts with filtered rows in fact_task.csv."
+                )
+            else:
+                st.info("Select at least one team to run the two-team verification.")
+
+            # Three numeric, data-driven health observations. Avoid ranking teams
+            # by velocity because story-point scales can differ across teams.
+            st.subheader("Three team health findings")
+            team_health = filtered_tasks.assign(
+                blocked_flag=(filtered_tasks["status"] == "Blocked").astype(int),
+                reopened_flag=(filtered_tasks["reopened_count"] > 0).astype(int),
+                valid_on_time_flag=filtered_tasks["completed_on_time"].astype(str).str.strip().str.upper().isin(["Y", "N"]),
+                on_time_yes_flag=(filtered_tasks["completed_on_time"].astype(str).str.strip().str.upper() == "Y").astype(int)
+            ).groupby("team_id", as_index=False).agg(
+                blocked_tasks=("blocked_flag", "sum"),
+                reopened_tasks=("reopened_flag", "sum"),
+                done_tasks=("status", lambda values: int((values == "Done").sum())),
+                valid_on_time_flags=("valid_on_time_flag", "sum"),
+                on_time_tasks=("on_time_yes_flag", "sum")
+            ).merge(team_data[["team_id", "team_name"]], on="team_id", how="left")
+            eligible_health = team_health[team_health["valid_on_time_flags"] >= 30].copy()
+            if not team_health.empty:
+                blocked_leader = team_health.sort_values("blocked_tasks", ascending=False).iloc[0]
+                reopened_leader = team_health.sort_values("reopened_tasks", ascending=False).iloc[0]
+                st.markdown(
+                    f"1. **Blocked work:** {blocked_leader['team_name']} has the highest blocked-task count "
+                    f"in this selection (**{int(blocked_leader['blocked_tasks']):,}**). This is a workload signal, "
+                    "not proof that the team is less productive."
+                )
+                st.markdown(
+                    f"2. **Reopened work:** {reopened_leader['team_name']} has the most tasks reopened at least once "
+                    f"(**{int(reopened_leader['reopened_tasks']):,}**). Review task complexity and QA context before drawing conclusions."
+                )
+                if not eligible_health.empty:
+                    eligible_health["on_time_rate_pct"] = 100 * eligible_health["on_time_tasks"] / eligible_health["valid_on_time_flags"]
+                    low_ontime = eligible_health.sort_values("on_time_rate_pct").iloc[0]
+                    st.markdown(
+                        f"3. **Delivery follow-up:** {low_ontime['team_name']} has the lowest on-time rate among teams "
+                        f"with at least 30 valid completed-task flags (**{low_ontime['on_time_rate_pct']:.1f}%**, "
+                        f"{int(low_ontime['on_time_tasks'])}/{int(low_ontime['valid_on_time_flags'])} on time). "
+                        "Treat this as a prompt for investigation, not a team-performance verdict."
+                    )
+                else:
+                    st.markdown(
+                        "3. **On-time delivery:** No selected team has at least 30 valid Y/N completion flags, "
+                        "so the dashboard avoids making a low-sample delivery-rate comparison."
+                    )
+                st.caption(
+                    "Findings update with the team/sprint filters. Counts describe the selected data only; "
+                    "team size, sprint scope, task mix, and story-point estimation practices differ."
+                )
 
 except Exception as error:
     st.error("The dashboard could not load the metric views.")
