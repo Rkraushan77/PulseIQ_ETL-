@@ -847,7 +847,7 @@ try:
             }),
             hide_index=True
         )
-        
+
     # Predicted attrition risk
     st.divider()
     st.subheader("Predicted, not certain")
@@ -859,7 +859,7 @@ try:
         "Actual employee exits shown above are historical data, "
         "not predictions of future exits."
     )
-        
+
     # Three biggest historical findings
     st.divider()
     st.subheader("Three Key Historical Findings")
@@ -876,7 +876,7 @@ try:
            The 2026 figure covers January to September only.
         """
     )
-        
+
     # Privacy note
     st.caption(
         "Privacy note: Groups with fewer than 5 employee exits "
@@ -1382,6 +1382,271 @@ try:
                 "are excluded. Cost per employee is calculated per "
                 "employee-month, not per unique employee across the full period."
             )
+    # Task 10: Budget vs Actual and KPI Targets
+    st.divider()
+    st.header("Task 10: Budget vs Actual and KPI Targets")
+
+    budget_con = duckdb.connect(DATABASE, read_only=True)
+
+    try:
+        budget_actual = budget_con.execute("""
+            SELECT
+                b.department_id,
+                d.department_name,
+                CAST(b.month AS DATE) AS month,
+                b.budget_payroll_cost AS budget,
+                p.employer_cost AS actual,
+                p.gross_pay,
+                p.overtime_pay,
+                p.paid_employees
+            FROM budget_payroll_dept_month b
+            LEFT JOIN metric_payroll_monthly p
+                ON b.department_id = p.department_id
+                AND CAST(b.month AS DATE) = p.period_start
+            LEFT JOIN dim_department d
+                ON b.department_id = d.department_id
+            ORDER BY month, department_name
+        """).df()
+
+        budget_actual["variance"] = (
+            budget_actual["actual"] - budget_actual["budget"]
+        )
+
+        budget_actual["variance_pct"] = (
+            budget_actual["variance"]
+            / budget_actual["budget"].replace(0, pd.NA)
+            * 100
+        )
+
+        st.subheader("Payroll Budget vs Actual")
+
+        st.caption(
+            "Sign rule: variance = actual payroll cost − budget. "
+            "Positive variance means overspend; negative variance means "
+            "underspend. Variance % = variance / budget × 100."
+        )
+
+        valid_budget = budget_actual.dropna(
+            subset=["actual", "budget"]
+        ).copy()
+
+        if not valid_budget.empty:
+            total_budget = valid_budget["budget"].sum()
+            total_actual = valid_budget["actual"].sum()
+            total_variance = total_actual - total_budget
+
+            col1, col2, col3 = st.columns(3)
+
+            col1.metric(
+                "Approved Budget",
+                f"₹{total_budget:,.0f}"
+            )
+
+            col2.metric(
+                "Actual Payroll Cost",
+                f"₹{total_actual:,.0f}"
+            )
+
+            col3.metric(
+                "Variance",
+                f"₹{total_variance:,.0f}",
+                delta=f"{total_variance / total_budget * 100:.2f}%"
+                if total_budget else None,
+                delta_color="inverse"
+            )
+
+            st.subheader("Department Overspend Ranking")
+
+            overspend = (
+                valid_budget.groupby(
+                    ["department_id", "department_name"],
+                    as_index=False
+                )
+                .agg(
+                    budget=("budget", "sum"),
+                    actual=("actual", "sum"),
+                    variance=("variance", "sum")
+                )
+            )
+
+            overspend["variance_pct"] = (
+                overspend["variance"]
+                / overspend["budget"].replace(0, pd.NA)
+                * 100
+            )
+
+            overspend = overspend.sort_values(
+                "variance", ascending=False
+            )
+
+            st.dataframe(
+                overspend.style.format({
+                    "budget": "₹{:,.0f}",
+                    "actual": "₹{:,.0f}",
+                    "variance": "₹{:,.0f}",
+                    "variance_pct": "{:.2f}%"
+                }),
+                width="stretch",
+                hide_index=True
+            )
+
+            st.subheader("Monthly Budget Variance")
+
+            fig_budget = px.bar(
+                valid_budget,
+                x="month",
+                y="variance",
+                color="department_name",
+                barmode="group",
+                title="Actual Payroll Cost Minus Budget",
+                labels={
+                    "month": "Month",
+                    "variance": "Variance (₹)",
+                    "department_name": "Department"
+                }
+            )
+
+            st.plotly_chart(fig_budget, width="stretch")
+
+            st.subheader("Department and Month Details")
+
+            st.dataframe(
+                valid_budget[
+                    [
+                        "month",
+                        "department_name",
+                        "budget",
+                        "actual",
+                        "variance",
+                        "variance_pct"
+                    ]
+                ].style.format({
+                    "budget": "₹{:,.0f}",
+                    "actual": "₹{:,.0f}",
+                    "variance": "₹{:,.0f}",
+                    "variance_pct": "{:.2f}%"
+                }),
+                width="stretch",
+                hide_index=True
+            )
+
+        else:
+            st.warning(
+                "No matching budget and actual payroll records were found."
+            )
+
+        st.subheader("KPI Performance Against Targets")
+
+        kpi_targets_df = budget_con.execute("""
+            SELECT *
+            FROM kpi_targets
+            ORDER BY month, department_id
+        """).df()
+
+        attendance_df = budget_con.execute("""
+            SELECT
+                month_start AS month,
+                department_id,
+                present_records,
+                attendance_records
+            FROM metric_attendance_monthly
+        """).df()
+        kpi_targets_df["month"] = pd.to_datetime(
+        kpi_targets_df["month"]
+        ).dt.strftime("%Y-%m-%d")
+
+        attendance_df["month"] = pd.to_datetime(
+        attendance_df["month"]
+        ).dt.strftime("%Y-%m-%d")
+        attendance_df["attendance_actual_pct"] = (
+            attendance_df["present_records"]
+            / attendance_df["attendance_records"].replace(0, pd.NA)
+            * 100
+        )
+
+        kpi_view = kpi_targets_df.merge(
+            attendance_df[
+                ["month", "department_id", "attendance_actual_pct"]
+            ],
+            on=["month", "department_id"],
+            how="left"
+        )
+
+        kpi_view["attendance_target_pct"] = (
+            kpi_view["attendance_rate_target"] * 100
+        )
+
+        kpi_view["attendance_status"] = kpi_view.apply(
+            lambda row:
+                "Green"
+                if pd.notna(row["attendance_actual_pct"])
+                and row["attendance_actual_pct"]
+                >= row["attendance_target_pct"]
+                else "Red"
+                if pd.notna(row["attendance_actual_pct"])
+                else "Unavailable",
+            axis=1
+        )
+
+        st.caption(
+            "Attendance is shown as a percentage. Green means the target "
+            "is met; red means it is missed. Other KPIs are retained in "
+            "the target table for comparison as their actual metric "
+            "definitions are confirmed."
+        )
+
+        st.dataframe(
+            kpi_view[
+                [
+                    "month",
+                    "department_id",
+                    "attendance_actual_pct",
+                    "attendance_target_pct",
+                    "attendance_status",
+                    "overtime_share_target_pct",
+                    "attrition_monthly_target_pct",
+                    "task_completion_target_pct"
+                ]
+            ].style.format({
+                "attendance_actual_pct": "{:.2f}%",
+                "attendance_target_pct": "{:.2f}%",
+                "overtime_share_target_pct": "{:.2f}%",
+                "attrition_monthly_target_pct": "{:.2f}%",
+                "task_completion_target_pct": "{:.2f}%"
+            }),
+            width="stretch",
+            hide_index=True
+        )
+
+        st.subheader("Management Recommendations")
+
+        if not valid_budget.empty:
+            top_departments = overspend.head(2)
+
+            for _, department in top_departments.iterrows():
+                if department["variance"] > 0:
+                    st.write(
+                        f"- **{department['department_name']}**: "
+                        f"actual payroll is ₹{department['variance']:,.0f} "
+                        f"above budget. Review hiring, overtime and "
+                        f"payroll changes before revising the forecast."
+                    )
+                else:
+                    st.write(
+                        f"- **{department['department_name']}**: "
+                        f"payroll is within or below budget. Confirm that "
+                        f"service levels and staffing needs are still met."
+                    )
+
+        st.info(
+            "Fairness note: the approved budget may not reflect the hiring "
+            "freeze. Keep the original budget unchanged for audit purposes, "
+            "flag affected months, and explain staffing changes before "
+            "judging departments solely on overspend."
+        )
+
+    finally:
+        budget_con.close()
 
 except Exception as error:
     st.error("The dashboard could not load the metric views.")
