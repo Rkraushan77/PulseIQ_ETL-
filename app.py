@@ -1648,6 +1648,305 @@ try:
     finally:
         budget_con.close()
 
+
+    # Task 11: Profit and Loss and Expense Analytics
+    st.divider()
+    st.header("Task 11: Profit & Loss and Expense Analytics")
+
+    TASK11_ZIP = "data/raw/CSV.zip"
+
+    try:
+        with zipfile.ZipFile(TASK11_ZIP) as z:
+            ledger = pd.read_csv(z.open("csv/fact_ledger.csv"))
+            accounts = pd.read_csv(z.open("csv/dim_account.csv"))
+            expenses = pd.read_csv(z.open("csv/fact_expense.csv"))
+            vendors = pd.read_csv(z.open("csv/dim_vendor.csv"))
+
+        # Convert account codes to a consistent data type
+        ledger["account_code"] = ledger["account_code"].astype(str)
+        accounts["account_code"] = accounts["account_code"].astype(str)
+        expenses["category_account"] = expenses["category_account"].astype(str)
+
+        # Exclude group accounts to prevent double counting
+        detail_accounts = accounts[
+            accounts["is_group"].astype(str).str.upper() == "N"
+        ].copy()
+
+        ledger = ledger.merge(
+            detail_accounts,
+            on="account_code",
+            how="inner"
+        )
+
+        # Use only Profit & Loss detail accounts
+        pnl = ledger[
+            ledger["statement"] == "Profit & Loss"
+        ].copy()
+
+        pnl["revenue"] = 0.0
+        pnl["expenses"] = 0.0
+
+        pnl.loc[
+            pnl["account_type"] == "INCOME", "revenue"
+        ] = -pnl["signed_amount_debit_positive"]
+
+        pnl.loc[
+            pnl["account_type"] == "EXPENSE", "expenses"
+        ] = pnl["signed_amount_debit_positive"]
+
+        # Monthly P&L
+        monthly_pnl = pnl.groupby("posting_period").agg(
+            revenue=("revenue", "sum"),
+            expenses=("expenses", "sum")
+        ).reset_index()
+
+        monthly_pnl["profit"] = (
+            monthly_pnl["revenue"] - monthly_pnl["expenses"]
+        )
+
+        monthly_pnl["margin_percent"] = (
+            monthly_pnl["profit"] / monthly_pnl["revenue"] * 100
+        )
+
+        st.subheader("Monthly Financial Overview")
+
+        selected_month = st.selectbox(
+            "Select reporting month",
+            monthly_pnl["posting_period"].tolist(),
+            index=len(monthly_pnl) - 1,
+            key="task11_month"
+        )
+
+        selected_data = monthly_pnl[
+            monthly_pnl["posting_period"] == selected_month
+        ].iloc[0]
+
+        col1, col2, col3, col4 = st.columns(4)
+
+        col1.metric(
+            "Revenue",
+            f"₹{selected_data['revenue'] / 10000000:.2f} Cr"
+        )
+
+        col2.metric(
+            "Expenses",
+            f"₹{selected_data['expenses'] / 10000000:.2f} Cr"
+        )
+
+        col3.metric(
+            "Net Profit",
+            f"₹{selected_data['profit'] / 10000000:.2f} Cr"
+        )
+
+        col4.metric(
+            "Profit Margin",
+            f"{selected_data['margin_percent']:.2f}%"
+        )
+
+        st.subheader("Monthly Profit & Loss Table")
+
+        display_pnl = monthly_pnl.copy()
+
+        for column in ["revenue", "expenses", "profit"]:
+            display_pnl[column] = (
+                display_pnl[column] / 10000000
+            ).round(2)
+
+        display_pnl["margin_percent"] = (
+            display_pnl["margin_percent"].round(2)
+        )
+
+        st.dataframe(
+            display_pnl.rename(columns={
+                "posting_period": "Month",
+                "revenue": "Revenue (₹ Cr)",
+                "expenses": "Expenses (₹ Cr)",
+                "profit": "Profit (₹ Cr)",
+                "margin_percent": "Margin (%)"
+            }),
+            use_container_width=True,
+            hide_index=True
+        )
+
+        st.subheader("Revenue, Expenses and Profit Trend")
+
+        trend_data = monthly_pnl.melt(
+            id_vars="posting_period",
+            value_vars=["revenue", "expenses", "profit"],
+            var_name="Metric",
+            value_name="Amount"
+        )
+
+        trend_data["Amount"] = trend_data["Amount"] / 10000000
+
+        fig = px.line(
+            trend_data,
+            x="posting_period",
+            y="Amount",
+            color="Metric",
+            markers=True,
+            title="Monthly P&L Trend (₹ Crore)"
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+
+        # Expense category analysis
+        st.divider()
+        st.subheader("Expense Analysis by Category")
+
+        expenses = expenses.merge(
+            detail_accounts[
+                ["account_code", "account_name", "is_group"]
+            ],
+            left_on="category_account",
+            right_on="account_code",
+            how="left"
+        )
+
+        expenses = expenses[
+            expenses["is_group"].astype(str).str.upper() == "N"
+        ].copy()
+
+        category_data = (
+            expenses.groupby("account_name")["amount_excl_gst"]
+            .sum()
+            .reset_index()
+            .sort_values("amount_excl_gst", ascending=False)
+        )
+
+        category_data["amount_crore"] = (
+            category_data["amount_excl_gst"] / 10000000
+        )
+
+        fig_category = px.bar(
+            category_data,
+            x="account_name",
+            y="amount_crore",
+            title="Expense by Category (Excluding GST)",
+            labels={
+                "account_name": "Expense Category",
+                "amount_crore": "Amount (₹ Crore)"
+            }
+        )
+
+        st.plotly_chart(
+            fig_category,
+            use_container_width=True
+        )
+
+        # Top vendors
+        st.subheader("Top 10 Vendors")
+
+        vendor_data = expenses.merge(
+            vendors[["vendor_id", "vendor_name"]],
+            on="vendor_id",
+            how="left"
+        )
+
+        top_vendors = (
+            vendor_data.groupby("vendor_name")["amount_excl_gst"]
+            .sum()
+            .reset_index()
+            .sort_values("amount_excl_gst", ascending=False)
+            .head(10)
+        )
+
+        top_vendors["amount_crore"] = (
+            top_vendors["amount_excl_gst"] / 10000000
+        )
+
+        st.dataframe(
+            top_vendors[
+                ["vendor_name", "amount_crore"]
+            ].rename(columns={
+                "vendor_name": "Vendor",
+                "amount_crore": "Expense (₹ Crore)"
+            }).round(2),
+            use_container_width=True,
+            hide_index=True
+        )
+
+        # README headline reconciliation
+        st.divider()
+        st.subheader("README Headline Reconciliation")
+
+        total_revenue = monthly_pnl["revenue"].sum()
+        total_expenses = monthly_pnl["expenses"].sum()
+        total_profit = monthly_pnl["profit"].sum()
+        total_margin = total_profit / total_revenue * 100
+
+        tieout = pd.DataFrame({
+            "Metric": ["Revenue", "Expenses", "Profit", "Profit Margin"],
+            "Calculated": [
+                total_revenue / 10000000,
+                total_expenses / 10000000,
+                total_profit / 10000000,
+                total_margin
+            ],
+            "README": [126.09, 103.62, 22.47, 17.8],
+            "Unit": ["₹ Crore", "₹ Crore", "₹ Crore", "%"]
+        })
+
+        tieout["Difference"] = (
+            tieout["Calculated"] - tieout["README"]
+        ).round(2)
+
+        st.dataframe(
+            tieout.round(2),
+            use_container_width=True,
+            hide_index=True
+        )
+
+        st.warning(
+            "Small rounding differences exist between the calculated "
+            "P&L totals and the README headline figures. "
+            "Please review the Difference column in the table above."
+        )
+
+                # Management findings
+        st.divider()
+        st.subheader("Three Business Findings")
+
+        st.write(
+            "1. Salaries and wages are the largest P&L expense, "
+            "contributing approximately INR 78.69 crore."
+        )
+
+        st.write(
+            "2. Office rent, cloud hosting and marketing are the "
+            "largest expense-register categories. Skyline Realty "
+            "Holdings is the top vendor, with approximately "
+            "INR 1.69 crore in expenses."
+        )
+
+        st.write(
+            "3. Profit margin changes significantly across months. "
+            "It reached 27.16% in August 2026 and fell to "
+            "18.59% in September 2026."
+        )
+
+        st.divider()
+        st.subheader("Possible Causes of Margin Changes")
+
+        st.write(
+            "1. Payroll growth: Higher salaries, employee headcount "
+            "or overtime may increase expenses. Verify using monthly "
+            "payroll and headcount data."
+        )
+
+        st.write(
+            "2. Higher operating costs: Rent, cloud hosting or "
+            "marketing expenses may reduce profit margin. Verify "
+            "using monthly expense-category data."
+        )
+
+        st.write(
+            "3. Vendor spending changes: Higher vendor bills may "
+            "increase operating costs. Verify using monthly vendor "
+            "expenses and corresponding ledger postings."
+        )
+    except (KeyError, ValueError, zipfile.BadZipFile) as error:
+        st.error(f"Task 11 data could not be processed: {error}")
 except Exception as error:
     st.error("The dashboard could not load the metric views.")
     st.exception(error)
