@@ -1947,6 +1947,374 @@ try:
         )
     except (KeyError, ValueError, zipfile.BadZipFile) as error:
         st.error(f"Task 11 data could not be processed: {error}")
+
+    
+    # Task 12: Invoices, Receivables and Cash Flow
+    st.divider()
+    st.header("Task 12: Invoices, Receivables and Cash Flow")
+
+    TASK12_ZIP = "data/raw/CSV.zip"
+
+    try:
+        with zipfile.ZipFile(TASK12_ZIP) as z:
+            invoices = pd.read_csv(z.open("csv/fact_invoice.csv"))
+            payments = pd.read_csv(z.open("csv/fact_invoice_payment.csv"))
+            clients = pd.read_csv(z.open("csv/dim_client.csv"))
+            expenses = pd.read_csv(z.open("csv/fact_expense.csv"))
+
+        # Reporting cutoff from the master dataset
+        cutoff_date = pd.Timestamp("2026-09-30")
+
+        # Only these invoice statuses count as open receivables
+        open_statuses = ["SENT", "OVERDUE", "PARTIALLY_PAID"]
+
+        st.info(
+            "Open receivables include only SENT, OVERDUE and "
+            "PARTIALLY_PAID invoices. DRAFT and CANCELLED invoices "
+            "are excluded."
+        )
+
+        open_invoices = invoices[
+            invoices["status"].isin(open_statuses)
+        ].copy()
+
+        total_receivables = open_invoices["balance_due"].sum()
+
+        # Receivables ageing
+        ageing_labels = {
+            "Not yet due": "Not yet due",
+            "1-30 days": "1-30 days overdue",
+            "31-60 days": "31-60 days overdue",
+            "61-90 days": "61-90 days overdue",
+            "90+ days": "90+ days overdue"
+        }
+
+        open_invoices["ageing_category"] = (
+            open_invoices["ageing_bucket_at_cutoff"]
+            .map(ageing_labels)
+            .fillna("Unclassified")
+        )
+
+        ageing_order = [
+            "Not yet due",
+            "1-30 days overdue",
+            "31-60 days overdue",
+            "61-90 days overdue",
+            "90+ days overdue"
+        ]
+
+        ageing_summary = (
+            open_invoices.groupby("ageing_category")["balance_due"]
+            .sum()
+            .reindex(ageing_order, fill_value=0)
+            .rename_axis("ageing_category")
+            .reset_index()
+        )
+
+        ageing_order = [
+            "Not yet due",
+            "1-30 days overdue",
+            "31-60 days overdue",
+            "61-90 days overdue",
+            "90+ days overdue"
+        ]
+
+        ageing_summary["ageing_category"] = pd.Categorical(
+            ageing_summary["ageing_category"],
+            categories=ageing_order + ["Unclassified"],
+            ordered=True
+        )
+
+        ageing_summary = ageing_summary.sort_values("ageing_category")
+
+        ageing_total = ageing_summary["balance_due"].sum()
+        ageing_difference = total_receivables - ageing_total
+
+        # Client names for receivables
+        client_receivables = (
+            open_invoices.groupby("client_id")["balance_due"]
+            .sum()
+            .reset_index()
+            .merge(
+                clients[["client_id", "client_name"]],
+                on="client_id",
+                how="left"
+            )
+            .sort_values("balance_due", ascending=False)
+        )
+
+        overdue_invoices = open_invoices[
+            open_invoices["status"] == "OVERDUE"
+        ].copy()
+
+        overdue_clients = (
+            overdue_invoices.groupby("client_id")["balance_due"]
+            .sum()
+            .reset_index()
+            .merge(
+                clients[["client_id", "client_name"]],
+                on="client_id",
+                how="left"
+            )
+            .sort_values("balance_due", ascending=False)
+        )
+
+        # Average days to pay by client, using paid invoices only
+        paid_invoices = invoices[
+            (invoices["status"] == "PAID") &
+            (invoices["days_to_pay"].notna())
+        ].copy()
+
+        payment_behaviour = (
+            paid_invoices.groupby("client_id")
+            .agg(
+                paid_invoices=("invoice_id", "count"),
+                average_days_to_pay=("days_to_pay", "mean")
+            )
+            .reset_index()
+            .merge(
+                clients[
+                    ["client_id", "client_name", "payment_terms_days"]
+                ],
+                on="client_id",
+                how="left"
+            )
+        )
+
+        payment_behaviour["days_over_terms"] = (
+            payment_behaviour["average_days_to_pay"] -
+            payment_behaviour["payment_terms_days"]
+        )
+
+        payment_behaviour = payment_behaviour.sort_values(
+            "average_days_to_pay",
+            ascending=False
+        )
+
+        # Cash received from invoice payments
+        payments["payment_date"] = pd.to_datetime(
+            payments["payment_date"],
+            errors="coerce"
+        )
+
+        cash_in = (
+            payments.dropna(subset=["payment_date"])
+            .groupby(payments["payment_date"].dt.to_period("M"))["amount"]
+            .sum()
+            .rename("cash_in")
+        )
+
+        # Cash paid for expenses only
+        expenses["paid_date"] = pd.to_datetime(
+            expenses["paid_date"],
+            errors="coerce"
+        )
+
+        paid_expenses = expenses[
+            (expenses["status"] == "PAID") &
+            (expenses["paid_date"].notna())
+        ].copy()
+
+        cash_out = (
+            paid_expenses.groupby(
+                paid_expenses["paid_date"].dt.to_period("M")
+            )["total_amount"]
+            .sum()
+            .rename("cash_out")
+        )
+
+        monthly_cash = pd.concat(
+            [cash_in, cash_out],
+            axis=1
+        ).fillna(0)
+
+        monthly_cash["net_cash_movement"] = (
+            monthly_cash["cash_in"] - monthly_cash["cash_out"]
+        )
+
+        monthly_cash = monthly_cash.sort_index()
+        monthly_cash_display = monthly_cash.copy()
+        monthly_cash_display.index = (
+            monthly_cash_display.index.astype(str)
+        )
+
+        total_cash_in = monthly_cash["cash_in"].sum()
+        total_cash_out = monthly_cash["cash_out"].sum()
+        net_cash_movement = total_cash_in - total_cash_out
+
+        # Main receivables metrics
+        st.subheader("Receivables Overview")
+
+        col1, col2, col3 = st.columns(3)
+
+        col1.metric(
+            "Open Receivables",
+            f"₹{total_receivables:,.0f}"
+        )
+
+        col2.metric(
+            "Open Invoices",
+            f"{len(open_invoices):,}"
+        )
+
+        col3.metric(
+            "Overdue Invoices",
+            f"{len(overdue_invoices):,}"
+        )
+
+        # Ageing table and chart
+        st.subheader("Receivables Ageing")
+
+        ageing_display = ageing_summary.copy()
+        ageing_display["balance_due"] = ageing_display[
+            "balance_due"
+        ].map(lambda value: f"₹{value:,.0f}")
+
+        st.dataframe(
+            ageing_display,
+            use_container_width=True,
+            hide_index=True
+        )
+
+        ageing_chart = px.bar(
+            ageing_summary,
+            x="ageing_category",
+            y="balance_due",
+            title="Outstanding Receivables by Ageing Bucket",
+            labels={
+                "ageing_category": "Ageing Category",
+                "balance_due": "Outstanding Amount (₹)"
+            }
+        )
+
+        st.plotly_chart(ageing_chart, use_container_width=True)
+
+        if abs(ageing_difference) < 0.01:
+            st.success(
+                f"Ageing reconciliation passed. "
+                f"Bucket total matches open receivables: "
+                f"₹{ageing_total:,.2f}"
+            )
+        else:
+            st.error(
+                f"Ageing reconciliation failed. Difference: "
+                f"₹{ageing_difference:,.2f}"
+            )
+
+        # Clients with the highest overdue amounts
+        st.subheader("Clients with Highest Overdue Money")
+
+        st.dataframe(
+            overdue_clients.head(10).style.format({
+                "balance_due": "₹{:,.0f}"
+            }),
+            use_container_width=True,
+            hide_index=True
+        )
+
+        # Client payment behaviour
+        st.subheader("Average Days to Pay by Client")
+
+        st.caption(
+            "Based on paid invoices only. Compare average payment "
+            "days with the client's agreed payment terms."
+        )
+
+        st.dataframe(
+            payment_behaviour.head(10).style.format({
+                "average_days_to_pay": "{:.1f}",
+                "payment_terms_days": "{:.0f}",
+                "days_over_terms": "{:+.1f}"
+            }),
+            use_container_width=True,
+            hide_index=True
+        )
+
+        # Monthly cash in versus cash out
+        st.subheader("Monthly Cash In versus Cash Out")
+
+        col1, col2, col3 = st.columns(3)
+
+        col1.metric("Total Cash In", f"₹{total_cash_in / 10000000:.2f} Cr")
+        col2.metric("Paid Expense Cash Out", f"₹{total_cash_out / 10000000:.2f} Cr")
+        col3.metric("Net Cash Movement", f"₹{net_cash_movement / 10000000:.2f} Cr")
+
+        cash_chart_data = (
+            monthly_cash_display.reset_index()
+            .rename(columns={"index": "month"})
+            .melt(
+                id_vars="month",
+                value_vars=["cash_in", "cash_out"],
+                var_name="cash_type",
+                value_name="amount"
+            )
+        )
+
+        cash_chart = px.bar(
+            cash_chart_data,
+            x="month",
+            y="amount",
+            color="cash_type",
+            barmode="group",
+            title="Monthly Cash Received and Paid",
+            labels={
+                "month": "Month",
+                "amount": "Amount (₹)",
+                "cash_type": "Cash Type"
+            }
+        )
+
+        st.plotly_chart(cash_chart, use_container_width=True)
+
+        st.dataframe(
+            monthly_cash_display.style.format({
+                "cash_in": "₹{:,.2f}",
+                "cash_out": "₹{:,.2f}",
+                "net_cash_movement": "₹{:,.2f}"
+            }),
+            use_container_width=True
+        )
+
+        # Business interpretation
+        st.subheader("Business Findings")
+
+        if not overdue_clients.empty:
+            top_client = overdue_clients.iloc[0]
+
+            st.write(
+                f"**Highest overdue exposure:** "
+                f"{top_client['client_name']} has "
+                f"₹{top_client['balance_due']:,.0f} overdue."
+            )
+
+        if not payment_behaviour.empty:
+            slow_client = payment_behaviour.iloc[0]
+
+            st.write(
+                f"**Slowest average payer:** "
+                f"{slow_client['client_name']} takes "
+                f"{slow_client['average_days_to_pay']:.1f} days on "
+                f"average, against agreed terms of "
+                f"{slow_client['payment_terms_days']} days."
+            )
+
+        st.write(
+            "**Finance recommendation:** Review clients whose "
+            "average payment time exceeds agreed terms. Confirm "
+            "contract terms, reasons for delays, outstanding "
+            "exposure and expected collection dates."
+        )
+
+        st.info(
+            "Cash movement includes invoice payments received and "
+            "paid expenses only. It does not represent complete "
+            "company cash flow because payroll and other cash "
+            "movements are not included."
+        )
+
+    except (KeyError, ValueError, zipfile.BadZipFile) as error:
+        st.error(f"Task 12 data could not be processed: {error}")
+
 except Exception as error:
     st.error("The dashboard could not load the metric views.")
     st.exception(error)
